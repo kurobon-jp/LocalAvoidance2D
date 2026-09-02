@@ -1,0 +1,9 @@
+{
+  "name": "LocalAvoidance2D.Samples",
+  "rootNamespace": "LocalAvoidance2D.Samples",
+  "references": [
+    "LocalAvoidance2D",
+    "Unity.Mathematics"
+  ],
+  "autoReferenced": true
+}

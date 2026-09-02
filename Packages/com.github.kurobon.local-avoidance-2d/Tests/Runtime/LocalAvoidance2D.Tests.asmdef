@@ -1,0 +1,12 @@
+{
+  "name": "LocalAvoidance2D.Tests",
+  "rootNamespace": "LocalAvoidance2D.Tests",
+  "references": [
+    "LocalAvoidance2D",
+    "Unity.Collections",
+    "Unity.Mathematics"
+  ],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "defineConstraints": ["UNITY_INCLUDE_TESTS"],
+  "autoReferenced": false
+}

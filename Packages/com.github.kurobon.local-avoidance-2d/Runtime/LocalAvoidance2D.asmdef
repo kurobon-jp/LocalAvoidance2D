@@ -1,0 +1,11 @@
+{
+  "name": "LocalAvoidance2D",
+  "rootNamespace": "LocalAvoidance2D",
+  "references": [
+    "Unity.Burst",
+    "Unity.Collections",
+    "Unity.Mathematics"
+  ],
+  "allowUnsafeCode": false,
+  "autoReferenced": true
+}
