@@ -51,8 +51,6 @@
     "com.unity.modules.video": "1.0.0",
     "com.unity.modules.vr": "1.0.0",
     "com.unity.modules.wind": "1.0.0",
-    "com.unity.modules.xr": "1.0.0",
-      "com.github.kurobon.local-avoidance-2d":
-        "file:../../LocalAvoidance2D/Packages/com.github.kurobon.local-avoidance-2d"
+    "com.unity.modules.xr": "1.0.0"
   }
 }
