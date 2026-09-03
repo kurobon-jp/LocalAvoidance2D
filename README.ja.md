@@ -8,6 +8,9 @@ Unity Physicsに依存しない2D crowd simulationを提供します。
 ![video01](media/video01.gif)
 ![video02](media/video02.gif)
 
+> [!IMPORTANT]
+> Local Avoidance 2Dは現在開発中です。今後APIが大きく変更される可能性があります。
+
 ## Features
 
 - 予測的な速度回避

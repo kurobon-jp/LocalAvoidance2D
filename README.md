@@ -9,6 +9,9 @@ It provides 2D crowd simulation without depending on Unity Physics.
 
 ![video02](media/video02.gif)
 
+> [!IMPORTANT]
+> Local Avoidance 2D is currently under development. The API may change significantly in the future.
+
 ## Features
 
 - Predictive velocity avoidance
