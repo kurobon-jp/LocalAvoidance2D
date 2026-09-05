@@ -1,3 +1,5 @@
+![Local Avoidance 2D](docs/assets/local-avoidance-2d-banner.png)
+
 # Local Avoidance 2D
 
 [English](README.md) | 日本語
@@ -5,8 +7,8 @@
 Local Avoidance 2Dは、Burst/Jobsで多数の円形Agentを処理するUnity向けライブラリです。
 Unity Physicsに依存しない2D crowd simulationを提供します。
 
-![video01](media/video01.gif)
-![video02](media/video02.gif)
+![video01](docs/assets/video01.gif)
+![video02](docs/assets/video02.gif)
 
 > [!IMPORTANT]
 > Local Avoidance 2Dは現在開発中です。今後APIが大きく変更される可能性があります。
@@ -625,19 +627,20 @@ Slotを検査するため、確保容量より使用件数が少ない場合は�
 
 ## AgentContactState
 
+`ENABLE_DIAGNOSTICS_LOG`が有効な場合、`LocalAvoidanceDiagnostics.PriorityContactCounts`から、
+最終Solver反復における各Agentの接触数を自身との相対Priority別に`Lower`、`Equal`、`Higher`として取得できます。
+同様に、`LocalAvoidanceDiagnostics.ConstraintDetails`から選択された拘束の`OtherMass`、`OtherRadius`、
+`Penetration`、`CorrectionLimit`を取得できます。
+
 | フィールド | 内容 |
 |---|---|
 | `AgentContactCount` | 最終Solver反復でContact Skin内にいる近傍Agent数です。 |
 | `ObstacleContactCount` | 最終Solver反復で接触したObstacle数です。 |
 | `BlockingAgentContactCount` | 自身と同等以上のAvoidance Priorityを持ち、希望進行方向の前方に接触しているAgent数です。 |
 | `ForwardPenetrationPressure` | 進行方向にある接触の最大侵入率です。半径合計の25%侵入すると`1`になります。 |
-| `Priority0ContactCount`～`Priority2ContactCount` | Avoidance Priority別のAgent接触数です。 |
 | `CombinedNormal` | 接触法線の合計です。必要なら利用側でnormalizeします。 |
 | `ConstraintNormal` / `AllowedNormalSpeed` | 次フレームへ保持する主要な非貫通拘束です。 |
 | `ConstraintAgentIndex` | 主要な接触拘束として選ばれた相手AgentのSlot番号です。有効性は`HasConstraint`で判定します。 |
-| `ConstraintOtherMass` / `ConstraintOtherRadius` | 選択された拘束相手の情報です。 |
-| `ConstraintPenetration` | 選択された拘束相手との侵入距離です。 |
-| `CorrectionLimit` | 最終Solver反復でこのAgentへ適用できた位置補正距離の上限です。 |
 | `HasConstraint` | 次フレームへ保持する主要な非貫通拘束があれば`1`です。 |
 | `ConstraintBlocksMovement` | `ConstraintAgentIndex`で示される代表接触相手が、このAgentの速度を拘束できる場合は`1`です。 |
 | `ConstraintIsDominant` | Mass比により、移動を最も強く制限する接触として選択されていれば`1`です。 |

@@ -10,6 +10,6 @@
 !Assets/**
 !Packages/**
 !ProjectSettings/**
-!media/**
+!docs/**
 
 Assets/Samples/**

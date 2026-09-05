@@ -1,3 +1,5 @@
+![Local Avoidance 2D](docs/assets/local-avoidance-2d-banner.png)
+
 # Local Avoidance 2D
 
 English | [日本語](README.ja.md)
@@ -5,9 +7,9 @@ English | [日本語](README.ja.md)
 Local Avoidance 2D is a Unity library that processes large numbers of circular agents using Burst and the Job System.
 It provides 2D crowd simulation without depending on Unity Physics.
 
-![video01](media/video01.gif)
+![video01](docs/assets/video01.gif)
 
-![video02](media/video02.gif)
+![video02](docs/assets/video02.gif)
 
 > [!IMPORTANT]
 > Local Avoidance 2D is currently under development. The API may change significantly in the future.
@@ -546,19 +548,22 @@ Inactive agent slots are skipped. Overloads without counts still inspect every o
 
 `AgentContactState` is an aggregate intended for crowd pressure, animation, effects, and gameplay events; it is not a complete list of every contact pair.
 
+When `ENABLE_DIAGNOSTICS_LOG` is enabled, `LocalAvoidanceDiagnostics.PriorityContactCounts`
+reports `Lower`, `Equal`, and `Higher` contact counts relative to each observed agent during
+the final solver iteration. This replaces the former absolute-priority fields without
+adding diagnostic-only data to `AgentContactState`.
+`LocalAvoidanceDiagnostics.ConstraintDetails` similarly reports the selected constraint's
+`OtherMass`, `OtherRadius`, `Penetration`, and `CorrectionLimit` values.
+
 | Field | Description |
 |---|---|
 | `AgentContactCount` | Nearby agents within the contact skin during the final solver iteration. |
 | `ObstacleContactCount` | Obstacles contacted during the final solver iteration. |
 | `BlockingAgentContactCount` | Contacts ahead of the desired direction whose avoidance priority is equal or higher. |
 | `ForwardPenetrationPressure` | Maximum penetration ratio ahead. It reaches `1` at 25% of the combined radii. |
-| `Priority0ContactCount` through `Priority2ContactCount` | Agent contact counts grouped by avoidance priority. |
 | `CombinedNormal` | Sum of contact normals. Normalize it in application code if needed. |
 | `ConstraintNormal` / `AllowedNormalSpeed` | Primary non-penetration constraint retained for the next frame. |
 | `ConstraintAgentIndex` | Slot of the agent selected as the primary constraint. Check `HasConstraint` before using it. |
-| `ConstraintOtherMass` / `ConstraintOtherRadius` | Properties of the selected constraint partner. |
-| `ConstraintPenetration` | Penetration distance against the selected constraint partner. |
-| `CorrectionLimit` | Maximum positional correction distance available to this agent in the final solver iteration. |
 | `HasConstraint` | `1` when a primary non-penetration constraint is retained. |
 | `ConstraintBlocksMovement` | `1` when the representative contact can constrain this agent's velocity. |
 | `ConstraintIsDominant` | `1` when the contact was selected as movement-limiting due to the mass ratio. |
