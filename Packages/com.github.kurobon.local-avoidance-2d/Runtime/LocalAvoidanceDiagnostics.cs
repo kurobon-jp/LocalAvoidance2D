@@ -4,6 +4,23 @@ using Unity.Mathematics;
 
 namespace LocalAvoidance2D
 {
+    /// <summary>Contact counts grouped by priority relative to the observed agent.</summary>
+    public struct AgentPriorityContactCounts
+    {
+        public int Lower;
+        public int Equal;
+        public int Higher;
+    }
+
+    /// <summary>Diagnostic details for the primary contact constraint selected for an agent.</summary>
+    public struct AgentConstraintDetails
+    {
+        public float OtherMass;
+        public float OtherRadius;
+        public float Penetration;
+        public float CorrectionLimit;
+    }
+
     /// <summary>Optional diagnostic storage. Create it only while simulation diagnostics are required.</summary>
     public sealed class LocalAvoidanceDiagnostics : IDisposable
     {
@@ -21,6 +38,8 @@ namespace LocalAvoidance2D
         public NativeArray<int> RetainedNeighborCounts { get; }
         public NativeArray<int> SameCellCandidateChecks { get; }
         public NativeArray<byte> CandidateLimitReached { get; }
+        public NativeArray<AgentPriorityContactCounts> PriorityContactCounts { get; }
+        public NativeArray<AgentConstraintDetails> ConstraintDetails { get; }
         internal NativeArray<FixedList128Bytes<int>> CachedNeighbors { get; }
 
         public LocalAvoidanceDiagnostics(int capacity, Allocator allocator = Allocator.Persistent)
@@ -38,6 +57,8 @@ namespace LocalAvoidance2D
             RetainedNeighborCounts = new NativeArray<int>(capacity, allocator);
             SameCellCandidateChecks = new NativeArray<int>(capacity, allocator);
             CandidateLimitReached = new NativeArray<byte>(capacity, allocator);
+            PriorityContactCounts = new NativeArray<AgentPriorityContactCounts>(capacity, allocator);
+            ConstraintDetails = new NativeArray<AgentConstraintDetails>(capacity, allocator);
             CachedNeighbors = new NativeArray<FixedList128Bytes<int>>(capacity, allocator);
         }
 
@@ -79,6 +100,8 @@ namespace LocalAvoidance2D
         public void Dispose()
         {
             if (CachedNeighbors.IsCreated) CachedNeighbors.Dispose();
+            if (ConstraintDetails.IsCreated) ConstraintDetails.Dispose();
+            if (PriorityContactCounts.IsCreated) PriorityContactCounts.Dispose();
             if (CandidateLimitReached.IsCreated) CandidateLimitReached.Dispose();
             if (SameCellCandidateChecks.IsCreated) SameCellCandidateChecks.Dispose();
             if (RetainedNeighborCounts.IsCreated) RetainedNeighborCounts.Dispose();

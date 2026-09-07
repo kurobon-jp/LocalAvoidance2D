@@ -324,6 +324,8 @@ namespace LocalAvoidance2D
 #if ENABLE_DIAGNOSTICS_LOG
                     DiagnosticSolverPositions = diagnostics.SolverPositions,
                     DiagnosticSolverCorrections = diagnostics.SolverCorrections,
+                    DiagnosticPriorityContactCounts = diagnostics.PriorityContactCounts,
+                    DiagnosticConstraintDetails = diagnostics.ConstraintDetails,
                     DiagnosticCapacity = Capacity,
 #endif
                     Obstacles = Obstacles,
@@ -905,12 +907,24 @@ namespace LocalAvoidance2D
             public NativeArray<float2> DiagnosticSolverPositions;
             [WriteOnly, NativeDisableParallelForRestriction]
             public NativeArray<float2> DiagnosticSolverCorrections;
+            [WriteOnly] public NativeArray<AgentPriorityContactCounts> DiagnosticPriorityContactCounts;
+            [WriteOnly] public NativeArray<AgentConstraintDetails> DiagnosticConstraintDetails;
             public int DiagnosticCapacity;
 #endif
 
             public void Execute(int index)
             {
-                if (Active[index] == 0) return;
+                if (Active[index] == 0)
+                {
+#if ENABLE_DIAGNOSTICS_LOG
+                    if (SolverIteration == SolverIterationCount - 1)
+                    {
+                        DiagnosticPriorityContactCounts[index] = default;
+                        DiagnosticConstraintDetails[index] = default;
+                    }
+#endif
+                    return;
+                }
                 var position = Positions[index];
                 var directControl = DirectControl[index] != 0;
                 var stableContactResolution = StableContactResolution[index] != 0;
@@ -941,6 +955,9 @@ namespace LocalAvoidance2D
                 var dominantBlocksMovement = false;
                 var dominantIsRetained = false;
                 var contact = default(AgentContactState);
+#if ENABLE_DIAGNOSTICS_LOG
+                var priorityContactCounts = default(AgentPriorityContactCounts);
+#endif
                 var previousContact = Contacts[index];
                 var idleStable = stableContactResolution && !directControl &&
                                  math.lengthsq(DesiredVelocities[index]) <= 1e-8f;
@@ -984,9 +1001,11 @@ namespace LocalAvoidance2D
                                 math.saturate(math.max(0f, minimum - distance) /
                                               (combinedRadius * .25f)));
                         }
-                        if (otherPriority == 0) contact.Priority0ContactCount++;
-                        else if (otherPriority == 1) contact.Priority1ContactCount++;
-                        else contact.Priority2ContactCount++;
+#if ENABLE_DIAGNOSTICS_LOG
+                        if (otherPriority < priority) priorityContactCounts.Lower++;
+                        else if (otherPriority == priority) priorityContactCounts.Equal++;
+                        else priorityContactCounts.Higher++;
+#endif
                         contact.CombinedNormal += normal;
                     }
                     if (actualContact && WriteContacts != 0 &&
@@ -1234,20 +1253,31 @@ namespace LocalAvoidance2D
                 Velocities[index] = constrainedVelocity;
                 if (WriteContacts != 0)
                 {
+#if ENABLE_DIAGNOSTICS_LOG
+                    DiagnosticPriorityContactCounts[index] = priorityContactCounts;
+#endif
                     contact.ConstraintNormal = strongestNormal;
                     contact.AllowedNormalSpeed = strongestOtherNormalSpeed;
-                    contact.ConstraintAgentIndex = dominantMassRatio >= DominantMassRatioThreshold
+                    var constraintAgentIndex = dominantMassRatio >= DominantMassRatioThreshold
                         ? dominantNeighbor
                         : strongestNeighbor;
-                    contact.ConstraintOtherMass = strongestOtherMass;
-                    contact.ConstraintOtherRadius = contact.ConstraintAgentIndex >= 0 &&
-                                                    contact.ConstraintAgentIndex < Radii.Length
-                        ? Radii[contact.ConstraintAgentIndex]
+                    var constraintOtherRadius = constraintAgentIndex >= 0 &&
+                                                constraintAgentIndex < Radii.Length
+                        ? Radii[constraintAgentIndex]
                         : 0f;
-                    contact.ConstraintPenetration = dominantMassRatio >= DominantMassRatioThreshold
+                    var constraintPenetration = dominantMassRatio >= DominantMassRatioThreshold
                         ? dominantPenetration
                         : strongestPenetration;
-                    contact.CorrectionLimit = maxCorrection;
+                    contact.ConstraintAgentIndex = constraintAgentIndex;
+#if ENABLE_DIAGNOSTICS_LOG
+                    DiagnosticConstraintDetails[index] = new AgentConstraintDetails
+                    {
+                        OtherMass = strongestOtherMass,
+                        OtherRadius = constraintOtherRadius,
+                        Penetration = constraintPenetration,
+                        CorrectionLimit = maxCorrection
+                    };
+#endif
                     contact.HasConstraint = (byte)(contact.ConstraintAgentIndex != int.MaxValue ? 1 : 0);
                     contact.ConstraintBlocksMovement = (byte)(strongestBlocksMovement ? 1 : 0);
                     contact.ConstraintIsDominant = (byte)(dominantMassRatio >= DominantMassRatioThreshold ? 1 : 0);

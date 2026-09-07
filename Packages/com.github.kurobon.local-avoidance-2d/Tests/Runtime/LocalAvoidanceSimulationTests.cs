@@ -421,6 +421,33 @@ namespace LocalAvoidance2D.Tests
             Assert.That(simulation.ResolvedVelocities[0].x, Is.EqualTo(6f).Within(.001f));
         }
 
+#if ENABLE_DIAGNOSTICS_LOG
+        [Test]
+        public void DiagnosticsGroupContactsByRelativePriority()
+        {
+            using var simulation = Create(3);
+            using var diagnostics = new LocalAvoidanceDiagnostics(3);
+            SetAgent(simulation, 0, float2.zero, float2.zero, .5f);
+            SetAgent(simulation, 1, new float2(-.8f, 0f), float2.zero, .5f);
+            SetAgent(simulation, 2, new float2(.8f, 0f), float2.zero, .5f);
+            var priorities = simulation.AvoidancePriorities;
+            priorities[0] = 1;
+            priorities[1] = 0;
+            priorities[2] = 2;
+
+            simulation.Step(1f / 60f, 3, 0, diagnostics);
+
+            var counts = diagnostics.PriorityContactCounts[0];
+            Assert.That(counts.Lower, Is.EqualTo(1));
+            Assert.That(counts.Equal, Is.Zero);
+            Assert.That(counts.Higher, Is.EqualTo(1));
+            var constraint = diagnostics.ConstraintDetails[0];
+            Assert.That(constraint.OtherMass, Is.EqualTo(1f));
+            Assert.That(constraint.OtherRadius, Is.EqualTo(.5f));
+            Assert.That(constraint.CorrectionLimit, Is.GreaterThan(0f));
+        }
+#endif
+
         [Test]
         public void MovingNeighborDoesNotCarryIdleStableAgent()
         {
