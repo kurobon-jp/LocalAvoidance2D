@@ -49,9 +49,6 @@ namespace LocalAvoidance2D
         /// Reaches one at 25% of the pair's combined radius.
         /// </summary>
         public float ForwardPenetrationPressure;
-        public int Priority0ContactCount;
-        public int Priority1ContactCount;
-        public int Priority2ContactCount;
         public int ObstacleContactCount;
         public float2 CombinedNormal;
         /// <summary>Primary non-penetration normal selected by the previous solver step.</summary>
@@ -59,10 +56,6 @@ namespace LocalAvoidance2D
         /// <summary>Minimum velocity allowed along ConstraintNormal on the next movement step.</summary>
         public float AllowedNormalSpeed;
         public int ConstraintAgentIndex;
-        public float ConstraintOtherMass;
-        public float ConstraintOtherRadius;
-        public float ConstraintPenetration;
-        public float CorrectionLimit;
         public byte HasConstraint;
         /// <summary>Whether the selected agent was allowed to constrain this agent's velocity.</summary>
         public byte ConstraintBlocksMovement;

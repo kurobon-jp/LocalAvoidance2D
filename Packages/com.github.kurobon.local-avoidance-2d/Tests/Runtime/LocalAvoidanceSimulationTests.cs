@@ -421,6 +421,97 @@ namespace LocalAvoidance2D.Tests
             Assert.That(simulation.ResolvedVelocities[0].x, Is.EqualTo(6f).Within(.001f));
         }
 
+#if ENABLE_DIAGNOSTICS_LOG
+        [Test]
+        public void DiagnosticsGroupContactsByRelativePriority()
+        {
+            using var simulation = Create(3);
+            using var diagnostics = new LocalAvoidanceDiagnostics(3);
+            SetAgent(simulation, 0, float2.zero, float2.zero, .5f);
+            SetAgent(simulation, 1, new float2(-.8f, 0f), float2.zero, .5f);
+            SetAgent(simulation, 2, new float2(.8f, 0f), float2.zero, .5f);
+            var priorities = simulation.AvoidancePriorities;
+            priorities[0] = 1;
+            priorities[1] = 0;
+            priorities[2] = 2;
+
+            simulation.Step(1f / 60f, 3, 0, diagnostics);
+
+            var counts = diagnostics.PriorityContactCounts[0];
+            Assert.That(counts.Lower, Is.EqualTo(1));
+            Assert.That(counts.Equal, Is.Zero);
+            Assert.That(counts.Higher, Is.EqualTo(1));
+            var constraint = diagnostics.ConstraintDetails[0];
+            Assert.That(constraint.OtherMass, Is.EqualTo(1f));
+            Assert.That(constraint.OtherRadius, Is.EqualTo(.5f));
+            Assert.That(constraint.CorrectionLimit, Is.GreaterThan(0f));
+        }
+
+        [Test]
+        public void DiagnosticsClearContactDetailsForInactiveAgent()
+        {
+            using var simulation = Create(1);
+            using var diagnostics = new LocalAvoidanceDiagnostics(1);
+            var priorityContactCounts = diagnostics.PriorityContactCounts;
+            priorityContactCounts[0] = new AgentPriorityContactCounts
+            {
+                Lower = 1,
+                Equal = 2,
+                Higher = 3
+            };
+            var constraintDetails = diagnostics.ConstraintDetails;
+            constraintDetails[0] = new AgentConstraintDetails
+            {
+                OtherMass = 1f,
+                OtherRadius = .5f,
+                Penetration = .25f,
+                CorrectionLimit = .1f
+            };
+
+            simulation.Step(1f / 60f, 1, 0, diagnostics);
+
+            var counts = diagnostics.PriorityContactCounts[0];
+            Assert.That(counts.Lower, Is.Zero);
+            Assert.That(counts.Equal, Is.Zero);
+            Assert.That(counts.Higher, Is.Zero);
+            var constraint = diagnostics.ConstraintDetails[0];
+            Assert.That(constraint.OtherMass, Is.Zero);
+            Assert.That(constraint.OtherRadius, Is.Zero);
+            Assert.That(constraint.Penetration, Is.Zero);
+            Assert.That(constraint.CorrectionLimit, Is.Zero);
+        }
+
+        [Test]
+        public void DiagnosticsClearConstraintDetailsWhenActiveAgentHasNoContact()
+        {
+            using var simulation = Create(1);
+            using var diagnostics = new LocalAvoidanceDiagnostics(1);
+            SetAgent(simulation, 0, float2.zero, float2.zero, .5f);
+            var priorityContactCounts = diagnostics.PriorityContactCounts;
+            priorityContactCounts[0] = new AgentPriorityContactCounts { Equal = 1 };
+            var constraintDetails = diagnostics.ConstraintDetails;
+            constraintDetails[0] = new AgentConstraintDetails
+            {
+                OtherMass = 1f,
+                OtherRadius = .5f,
+                Penetration = .25f,
+                CorrectionLimit = .1f
+            };
+
+            simulation.Step(1f / 60f, 1, 0, diagnostics);
+
+            var counts = diagnostics.PriorityContactCounts[0];
+            Assert.That(counts.Lower, Is.Zero);
+            Assert.That(counts.Equal, Is.Zero);
+            Assert.That(counts.Higher, Is.Zero);
+            var constraint = diagnostics.ConstraintDetails[0];
+            Assert.That(constraint.OtherMass, Is.Zero);
+            Assert.That(constraint.OtherRadius, Is.Zero);
+            Assert.That(constraint.Penetration, Is.Zero);
+            Assert.That(constraint.CorrectionLimit, Is.Zero);
+        }
+#endif
+
         [Test]
         public void MovingNeighborDoesNotCarryIdleStableAgent()
         {
