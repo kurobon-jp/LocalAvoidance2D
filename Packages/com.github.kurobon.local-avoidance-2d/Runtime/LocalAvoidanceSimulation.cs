@@ -917,7 +917,7 @@ namespace LocalAvoidance2D
                 if (Active[index] == 0)
                 {
 #if ENABLE_DIAGNOSTICS_LOG
-                    if (SolverIteration == SolverIterationCount - 1)
+                    if (WriteContacts != 0)
                     {
                         DiagnosticPriorityContactCounts[index] = default;
                         DiagnosticConstraintDetails[index] = default;
