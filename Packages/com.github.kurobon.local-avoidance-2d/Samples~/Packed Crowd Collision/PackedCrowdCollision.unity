@@ -205,6 +205,8 @@ MonoBehaviour:
   slowingDistance: 2
   packingSpeedRatio: 0.6
   neighborDistance: 3
+  obstacleRadius: 1
+  obstacleY: 3
   enableDiagnosticLog: 1
   diagnosticFrameInterval: 6
 --- !u!1660057539 &9223372036854775807

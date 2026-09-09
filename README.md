@@ -395,7 +395,7 @@ Control changes continuously across three phases. Traveling uses the normal pred
 
 Destinations separated by no more than the larger `slowingDistance` share a continuous packing region, so small per-agent offsets do not require a group ID. Destination state uses one lazily allocated contiguous array and reuses the existing neighbor search. Call `ClearDestination(agentIndex)` to return `DesiredVelocities` control to the caller; pass `stop: true` to clear it too.
 
-During travel, low-mobility destination agents carry no reciprocal avoidance responsibility. When stationary density is detected ahead, the moving agent evaluates straight and four steering candidates at ±20° and ±40°. Each score combines two look-ahead density samples, predicted collisions with individual neighbors, heading deviation and side-switching cost. The chosen side is retained through temporary density gaps. This avoids converting the packed crowd into an obstacle or assigning a cluster ID. Candidate evaluation is skipped when destination steering is unused or no stationary density is ahead.
+During travel, low-mobility destination agents carry no reciprocal avoidance responsibility. Moving agents therefore avoid an already packed crowd without converting it into an obstacle or assigning a cluster ID. This remains local collision avoidance: route selection around crowds, walls, and other non-convex arrangements belongs to a navigation layer, which should pass the next path waypoint to `SetDestination`. If no traversable route exists, slowing or stopping is expected.
 
 ## Agent input buffers
 

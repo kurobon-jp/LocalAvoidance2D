@@ -20,6 +20,12 @@ namespace LocalAvoidance2D.Samples
         [SerializeField, Min(.1f)] private float slowingDistance = 2f;
         [SerializeField, Min(0f)] private float packingSpeedRatio = .6f;
         [SerializeField, Min(.1f)] private float neighborDistance = 3f;
+        [SerializeField, Min(.1f)] private float obstacleRadius = 1f;
+        [SerializeField, Min(.1f)] private float obstacleY = 3f;
+        [SerializeField] private bool useNavigationWaypoint = true;
+        [SerializeField] private bool routeAboveObstacles = true;
+        [SerializeField, Min(0f)] private float waypointClearance = .5f;
+        [SerializeField, Min(.1f)] private float waypointArrivalDistance = 1.25f;
         [SerializeField] private bool enableDiagnosticLog = true;
         [SerializeField, Range(1, 60)] private int diagnosticFrameInterval = 6;
 
@@ -28,6 +34,9 @@ namespace LocalAvoidance2D.Samples
         private Transform[] _views;
         private Material _packedMaterial;
         private Material _movingMaterial;
+        private Material _obstacleMaterial;
+        private byte[] _movingRouteStages;
+        private float2 _navigationWaypoint;
         private StreamWriter _diagnosticWriter;
         private float _nextDiagnosticFlushTime;
 
@@ -36,7 +45,7 @@ namespace LocalAvoidance2D.Samples
             packedAgentCount = Mathf.Max(1, packedAgentCount);
             movingAgentCount = Mathf.Max(1, movingAgentCount);
             var agentCount = packedAgentCount + movingAgentCount;
-            _simulation = new LocalAvoidanceSimulation(agentCount, 0, Allocator.Persistent);
+            _simulation = new LocalAvoidanceSimulation(agentCount, 2, Allocator.Persistent);
             var settings = _simulation.Settings;
             settings.NeighborDistance = neighborDistance;
             _simulation.Settings = settings;
@@ -49,7 +58,11 @@ namespace LocalAvoidance2D.Samples
             _views = new Transform[agentCount];
             _packedMaterial = CreateMaterial(new Color(.15f, .75f, 1f));
             _movingMaterial = CreateMaterial(new Color(1f, .3f, .2f));
+            _obstacleMaterial = CreateMaterial(new Color(.15f, .17f, .2f));
+            var waypointY = obstacleY + obstacleRadius + radius + waypointClearance;
+            _navigationWaypoint = new float2(0f, routeAboveObstacles ? waypointY : -waypointY);
 
+            CreateObstacles();
             CreatePackedCrowd();
             CreateMovingCrowd();
         }
@@ -83,12 +96,15 @@ namespace LocalAvoidance2D.Samples
 
         private void CreateMovingCrowd()
         {
+            _movingRouteStages = new byte[movingAgentCount];
             var columns = Mathf.Max(1, Mathf.CeilToInt(Mathf.Sqrt(movingAgentCount)));
             var rows = Mathf.CeilToInt(movingAgentCount / (float)columns);
             var spacing = radius * 2.5f;
-            var destination = movingGroupJoinsPackedDestination
+            var finalDestination = movingGroupJoinsPackedDestination
                 ? float2.zero
                 : new float2(movingGoalX, 0f);
+            var useWaypoint = useNavigationWaypoint && !movingGroupJoinsPackedDestination;
+            var destination = useWaypoint ? _navigationWaypoint : finalDestination;
             for (var groupIndex = 0; groupIndex < movingAgentCount; groupIndex++)
             {
                 var index = packedAgentCount + groupIndex;
@@ -99,7 +115,7 @@ namespace LocalAvoidance2D.Samples
                     (row - (rows - 1) * .5f) * spacing);
                 _simulation.ActivateAgent(index, position, float2.zero, radius);
                 _simulation.SetDestination(index, destination, speed,
-                    slowingDistance, packingSpeedRatio);
+                    useWaypoint ? waypointArrivalDistance : slowingDistance, packingSpeedRatio);
                 _views[index] = CreateDisc($"Moving Agent {groupIndex}", position, _movingMaterial);
             }
         }
@@ -107,7 +123,8 @@ namespace LocalAvoidance2D.Samples
         private void Update()
         {
             var count = packedAgentCount + movingAgentCount;
-            _simulation.Step(Time.deltaTime, count, 0, _diagnostics);
+            AdvanceMovingWaypoints();
+            _simulation.Step(Time.deltaTime, count, 2, _diagnostics);
             var positions = _simulation.Positions;
             var currentVelocities = _simulation.CurrentVelocities;
             var resolvedPositions = _simulation.ResolvedPositions;
@@ -122,6 +139,22 @@ namespace LocalAvoidance2D.Samples
             WriteDiagnosticFrame();
         }
 
+        private void AdvanceMovingWaypoints()
+        {
+            if (!useNavigationWaypoint || movingGroupJoinsPackedDestination) return;
+            var arrivalDistanceSq = waypointArrivalDistance * waypointArrivalDistance;
+            for (var groupIndex = 0; groupIndex < movingAgentCount; groupIndex++)
+            {
+                if (_movingRouteStages[groupIndex] != 0) continue;
+                var index = packedAgentCount + groupIndex;
+                if (math.distancesq(_simulation.Positions[index], _navigationWaypoint) >
+                    arrivalDistanceSq) continue;
+                _movingRouteStages[groupIndex] = 1;
+                _simulation.SetDestination(index, new float2(movingGoalX, 0f), speed,
+                    slowingDistance, packingSpeedRatio);
+            }
+        }
+
         private void OpenDiagnosticLog()
         {
             var fileName = $"local-avoidance-packed-collision-{DateTime.Now:yyyyMMdd-HHmmss}.csv";
@@ -132,8 +165,29 @@ namespace LocalAvoidance2D.Samples
                 "speed,contacts,blocking_contacts,touching,constraint,sleeping," +
                 "retained_avoidance_side,side_retention_time," +
                 "first_correction_x,first_correction_y,last_correction_x,last_correction_y," +
-                "joins_packed_destination,neighbor_distance");
+                "joins_packed_destination,neighbor_distance,route_stage,waypoint_x,waypoint_y");
             Debug.Log($"[LocalAvoidance.PackedCollision] Diagnostic log: {path}");
+        }
+
+        private void CreateObstacles()
+        {
+            var obstacles = _simulation.Obstacles;
+            obstacles[0] = Obstacle.Circle(new float2(0f, obstacleY), obstacleRadius, 1u, 1u);
+            obstacles[1] = Obstacle.Circle(new float2(0f, -obstacleY), obstacleRadius, 1u, 1u);
+            CreateObstacleView("Upper Obstacle", new float2(0f, obstacleY));
+            CreateObstacleView("Lower Obstacle", new float2(0f, -obstacleY));
+        }
+
+        private void CreateObstacleView(string objectName, float2 position)
+        {
+            var obstacle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            obstacle.name = objectName;
+            obstacle.transform.SetParent(transform, false);
+            obstacle.transform.position = new Vector3(position.x, position.y, 0f);
+            obstacle.transform.localScale = new Vector3(
+                obstacleRadius * 2f, obstacleRadius * 2f, .08f);
+            obstacle.GetComponent<MeshRenderer>().sharedMaterial = _obstacleMaterial;
+            Destroy(obstacle.GetComponent<Collider>());
         }
 
         private void WriteDiagnosticFrame()
@@ -191,6 +245,11 @@ namespace LocalAvoidance2D.Samples
                 _diagnosticWriter.Write(',');
                 _diagnosticWriter.Write(movingGroupJoinsPackedDestination ? 1 : 0);
                 WriteFloat(neighborDistance, invariant);
+                _diagnosticWriter.Write(',');
+                _diagnosticWriter.Write(i < packedAgentCount ? -1 :
+                    _movingRouteStages[i - packedAgentCount]);
+                WriteFloat(_navigationWaypoint.x, invariant);
+                WriteFloat(_navigationWaypoint.y, invariant);
                 _diagnosticWriter.WriteLine();
             }
 
@@ -235,6 +294,7 @@ namespace LocalAvoidance2D.Samples
             _simulation?.Dispose();
             if (_packedMaterial != null) Destroy(_packedMaterial);
             if (_movingMaterial != null) Destroy(_movingMaterial);
+            if (_obstacleMaterial != null) Destroy(_obstacleMaterial);
         }
     }
 }
