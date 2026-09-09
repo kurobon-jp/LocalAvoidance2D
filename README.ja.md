@@ -25,7 +25,7 @@ Unity Physicsに依存しない2D crowd simulationを提供します。
 
 ## Usage
 
-Package ManagerのSamplesタブから、対向流と矩形Obstacle回避の実行可能なサンプルをImportできます。
+Package ManagerのSamplesタブから、対向流、矩形Obstacle回避、密集群への衝突を確認できる実行可能なサンプルをImportできます。
 
 ```csharp
 const int agentCapacity = 10_000;
@@ -439,6 +439,22 @@ Agentの移動を最も強く制限している接触拘束を保持する際、
 
 相手をAgentの移動を最も強く制限する接触として扱うMass比です。既定値は`4`、最低値は`1`です。相手Massが自身Massの
 この倍率以上なら、回避・接触拘束で相手を動かしにくい対象として安定保持します。
+
+## 目的地への移動と段階的な密集
+
+Group IDを使わず、Agentごとに独立した点を目的地として設定できます。
+
+```csharp
+simulation.SetDestination(agentIndex, destination, maximumSpeed,
+    slowingDistance: 1f,
+    packingSpeedRatio: .6f,
+    sleepSpeed: .02f,
+    wakeSpeed: .05f);
+```
+
+制御は3フェーズ間を連続的に変化します。Travelingでは通常の予測回避を使います。目的地距離が`2 * slowingDistance`から`slowingDistance`へ近づくSettlingでは切り替えが許可されますが、実際の局所接触密度に比例して有効になります。そのため、疎なAgentは早期に広がらず、まずゴールへ進みます。密集時はAgent同士の予測回避と接触減速を弱め、目的地への引力、短距離分離、目的地中心の角度密度制御、既存のJacobi接触補正を使います。Obstacleの予測回避は全フェーズで維持されます。
+
+目的地間の距離が双方の大きい方の`slowingDistance`以下なら、同じ連続密集領域として相互作用するため、Agentごとに目的地が少しずれていてもGroup IDは不要です。目的地状態は単一の連続配列として遅延確保され、既存の近傍探索を再利用します。`ClearDestination(agentIndex)`で`DesiredVelocities`の制御を呼び出し側へ戻し、`stop: true`なら同時に速度も消去します。
 
 ## Agent input buffers
 

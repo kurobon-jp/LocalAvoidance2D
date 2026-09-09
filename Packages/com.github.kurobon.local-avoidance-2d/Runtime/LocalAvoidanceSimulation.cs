@@ -21,6 +21,9 @@ namespace LocalAvoidance2D
         private NativeArray<float> _obstacleAvoidanceRetentionTimes;
         private NativeParallelHashSet<ulong> _currentContactPairs;
         private NativeParallelHashSet<ulong> _previousContactPairs;
+        private NativeArray<DestinationAgentData> _destinationAgents;
+        private byte _destinationMode;
+        private readonly Allocator _allocator;
         private JobHandle _lastHandle;
 #if ENABLE_DIAGNOSTICS_LOG
         private LocalAvoidanceDiagnostics _fallbackDiagnostics;
@@ -75,6 +78,7 @@ namespace LocalAvoidance2D
             if (obstacleCapacity < 0) throw new ArgumentOutOfRangeException(nameof(obstacleCapacity));
             Capacity = agentCapacity;
             ObstacleCapacity = obstacleCapacity;
+            _allocator = allocator;
             Settings = LocalAvoidanceSettings.Default;
             Positions = new NativeArray<float2>(agentCapacity, allocator);
             DesiredVelocities = new NativeArray<float2>(agentCapacity, allocator);
@@ -126,6 +130,10 @@ namespace LocalAvoidance2D
             _agentGrid = new NativeParallelMultiHashMap<int, int>(agentCapacity, allocator);
             _largeAgents = new NativeList<int>(agentCapacity, allocator);
             _requiredAgents = new NativeList<int>(agentCapacity, allocator);
+            // Jobs require every NativeContainer field to be constructed even when a runtime
+            // flag guarantees it will not be read. Keep a one-element placeholder until the
+            // first destination is assigned, then replace it with capacity-sized storage.
+            _destinationAgents = new NativeArray<DestinationAgentData>(1, allocator);
         }
 
         /// <summary>
@@ -146,7 +154,66 @@ namespace LocalAvoidance2D
             var active = Active;
             desiredVelocities[agentIndex] = desiredVelocity;
             radii[agentIndex] = radius;
+            if (_destinationMode != 0)
+            {
+                var data = _destinationAgents[agentIndex];
+                data.Enabled = 0;
+                data.Sleeping = 0;
+                _destinationAgents[agentIndex] = data;
+            }
             active[agentIndex] = 1;
+        }
+
+        /// <summary>Enables phased travel, settling and dense packing toward a point.</summary>
+        public void SetDestination(int agentIndex, float2 destination, float maximumSpeed,
+            float slowingDistance = 1f, float packingSpeedRatio = .6f,
+            float sleepSpeed = .02f, float wakeSpeed = .05f)
+        {
+            if ((uint)agentIndex >= (uint)Capacity) throw new ArgumentOutOfRangeException(nameof(agentIndex));
+            if (!math.all(math.isfinite(destination))) throw new ArgumentOutOfRangeException(nameof(destination));
+            if (!(maximumSpeed >= 0f) || !math.isfinite(maximumSpeed)) throw new ArgumentOutOfRangeException(nameof(maximumSpeed));
+            if (!(slowingDistance > 0f) || !math.isfinite(slowingDistance)) throw new ArgumentOutOfRangeException(nameof(slowingDistance));
+            if (!(packingSpeedRatio >= 0f) || !math.isfinite(packingSpeedRatio)) throw new ArgumentOutOfRangeException(nameof(packingSpeedRatio));
+            if (!(sleepSpeed >= 0f) || !math.isfinite(sleepSpeed)) throw new ArgumentOutOfRangeException(nameof(sleepSpeed));
+            if (!(wakeSpeed >= sleepSpeed) || !math.isfinite(wakeSpeed)) throw new ArgumentOutOfRangeException(nameof(wakeSpeed));
+            _lastHandle.Complete();
+            if (_destinationAgents.Length != Capacity)
+            {
+                _destinationAgents.Dispose();
+                _destinationAgents = new NativeArray<DestinationAgentData>(Capacity, _allocator);
+            }
+            _destinationMode = 1;
+            _destinationAgents[agentIndex] = new DestinationAgentData
+            {
+                Position = destination, MaximumSpeed = maximumSpeed,
+                SlowingDistance = slowingDistance, PackingSpeedRatio = packingSpeedRatio,
+                SleepSpeed = sleepSpeed, WakeSpeed = wakeSpeed, Enabled = 1
+            };
+        }
+
+        public void ClearDestination(int agentIndex, bool stop = false)
+        {
+            if ((uint)agentIndex >= (uint)Capacity) throw new ArgumentOutOfRangeException(nameof(agentIndex));
+            _lastHandle.Complete();
+            if (_destinationMode != 0)
+            {
+                var data = _destinationAgents[agentIndex];
+                data.Enabled = 0;
+                data.Sleeping = 0;
+                _destinationAgents[agentIndex] = data;
+            }
+            if (stop)
+            {
+                var desired = DesiredVelocities;
+                desired[agentIndex] = float2.zero;
+            }
+        }
+
+        public bool IsDestinationSleeping(int agentIndex)
+        {
+            if ((uint)agentIndex >= (uint)Capacity) throw new ArgumentOutOfRangeException(nameof(agentIndex));
+            _lastHandle.Complete();
+            return _destinationMode != 0 && _destinationAgents[agentIndex].Sleeping != 0;
         }
 
         /// <summary>
@@ -180,6 +247,12 @@ namespace LocalAvoidance2D
             contacts[agentIndex] = default;
             obstacleSides[agentIndex] = 0;
             obstacleRetentionTimes[agentIndex] = 0f;
+            if (_destinationMode != 0)
+            {
+                var data = _destinationAgents[agentIndex];
+                data.Sleeping = 0;
+                _destinationAgents[agentIndex] = data;
+            }
 
         }
 
@@ -221,6 +294,18 @@ namespace LocalAvoidance2D
                 Entered = EnteredContacts,
                 Exited = ExitedContacts
             }.Schedule(combinedDependency);
+            var destinationHandle = combinedDependency;
+            if (_destinationMode != 0)
+            {
+                destinationHandle = new DestinationInputJob
+                {
+                    Positions = Positions,
+                    Active = Active,
+                    DirectControl = DirectControl,
+                    Destinations = _destinationAgents,
+                    DesiredVelocities = DesiredVelocities
+                }.Schedule(agentCount, settings.InnerLoopBatchCount, combinedDependency);
+            }
             var clear = JobHandle.CombineDependencies(clearGrid, clearPairs);
             var build = new BuildGridJob
             {
@@ -249,6 +334,8 @@ namespace LocalAvoidance2D
                 ImmediateVelocity = ImmediateVelocity,
                 DirectControl = DirectControl,
                 StableContactResolution = StableContactResolution,
+                Destinations = _destinationAgents,
+                DestinationMode = _destinationMode,
 #if ENABLE_DIAGNOSTICS_LOG
                 DiagnosticDesiredBeforeConstraint = diagnostics.DesiredBeforeConstraint,
                 DiagnosticDesiredAfterConstraint = diagnostics.DesiredAfterConstraint,
@@ -287,7 +374,19 @@ namespace LocalAvoidance2D
                 MaximumNeighbors = settings.MaximumNeighbors,
                 MaximumCandidateChecks = settings.MaximumCandidateChecks,
                 DeltaTime = math.max(0f, deltaTime)
-            }.Schedule(agentCount, settings.InnerLoopBatchCount, build);
+            }.Schedule(agentCount, settings.InnerLoopBatchCount,
+                JobHandle.CombineDependencies(build, destinationHandle));
+
+            if (_destinationMode != 0)
+            {
+                move = new DestinationSleepJob
+                {
+                    Active = Active,
+                    DirectControl = DirectControl,
+                    ResolvedVelocities = ResolvedVelocities,
+                    Destinations = _destinationAgents
+                }.Schedule(agentCount, settings.InnerLoopBatchCount, move);
+            }
 
             var input = MovedPositions;
             var output = _scratchPositions;
@@ -334,6 +433,8 @@ namespace LocalAvoidance2D
                     CorrectedPositions = output,
                     Velocities = ResolvedVelocities,
                     DesiredVelocities = DesiredVelocities,
+                    Destinations = _destinationAgents,
+                    DestinationMode = _destinationMode,
                     InputVelocities = _constraintInputVelocities,
                     Contacts = Contacts,
                     ContactPairs = _currentContactPairs.AsParallelWriter(),
@@ -451,8 +552,61 @@ namespace LocalAvoidance2D
             if (Masses.IsCreated) Masses.Dispose();
             if (AvoidancePriorities.IsCreated) AvoidancePriorities.Dispose();
             if (CurrentVelocities.IsCreated) CurrentVelocities.Dispose();
+            if (_destinationAgents.IsCreated) _destinationAgents.Dispose();
             if (DesiredVelocities.IsCreated) DesiredVelocities.Dispose();
             if (Positions.IsCreated) Positions.Dispose();
+        }
+
+        private struct DestinationAgentData
+        {
+            public float2 Position;
+            public float MaximumSpeed;
+            public float SlowingDistance;
+            public float PackingSpeedRatio;
+            public float SleepSpeed;
+            public float WakeSpeed;
+            public byte Enabled;
+            public byte Sleeping;
+        }
+
+        [BurstCompile]
+        private struct DestinationInputJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<float2> Positions;
+            [ReadOnly] public NativeArray<byte> Active, DirectControl;
+            [ReadOnly] public NativeArray<DestinationAgentData> Destinations;
+            [WriteOnly] public NativeArray<float2> DesiredVelocities;
+
+            public void Execute(int index)
+            {
+                var destination = Destinations[index];
+                if (Active[index] == 0 || DirectControl[index] != 0 || destination.Enabled == 0) return;
+                var offset = destination.Position - Positions[index];
+                var distance = math.length(offset);
+                var speed = destination.MaximumSpeed * math.saturate(distance / destination.SlowingDistance);
+                DesiredVelocities[index] = math.normalizesafe(offset) * speed;
+            }
+        }
+
+        [BurstCompile]
+        private struct DestinationSleepJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<byte> Active, DirectControl;
+            [ReadOnly] public NativeArray<float2> ResolvedVelocities;
+            public NativeArray<DestinationAgentData> Destinations;
+
+            public void Execute(int index)
+            {
+                var destination = Destinations[index];
+                if (Active[index] == 0 || DirectControl[index] != 0 || destination.Enabled == 0) return;
+                var speed = math.length(ResolvedVelocities[index]);
+                if (destination.Sleeping != 0)
+                {
+                    if (speed > destination.WakeSpeed) destination.Sleeping = 0;
+                }
+                else if (speed <= destination.SleepSpeed) destination.Sleeping = 1;
+                Destinations[index] = destination;
+            }
         }
 
         [BurstCompile]
@@ -558,6 +712,8 @@ namespace LocalAvoidance2D
             [ReadOnly] public NativeArray<float> AvoidanceWeights;
             [ReadOnly] public NativeArray<uint> Layers, CollisionMasks;
             [ReadOnly] public NativeArray<byte> Active, ImmediateVelocity, DirectControl, StableContactResolution;
+            [ReadOnly] public NativeArray<DestinationAgentData> Destinations;
+            public byte DestinationMode;
 #if ENABLE_DIAGNOSTICS_LOG
             [WriteOnly] public NativeArray<float2> DiagnosticDesiredBeforeConstraint;
             [WriteOnly] public NativeArray<float2> DiagnosticDesiredAfterConstraint;
@@ -600,10 +756,29 @@ namespace LocalAvoidance2D
                 var desiredBeforeConstraint = desired;
                 var immediate = ImmediateVelocity[index] != 0;
                 var directControl = immediate || DirectControl[index] != 0;
+                var destination = default(DestinationAgentData);
+                var destinationEnabled = DestinationMode != 0 && !directControl;
+                if (destinationEnabled)
+                {
+                    destination = Destinations[index];
+                    destinationEnabled = destination.Enabled != 0;
+                }
+                var goalOffset = destinationEnabled ? position - destination.Position : float2.zero;
+                var goalDistance = math.length(goalOffset);
+                var settling = destinationEnabled
+                    ? math.saturate((destination.SlowingDistance * 2f - goalDistance) /
+                                    destination.SlowingDistance)
+                    : 0f;
+                var packingBlend = settling * settling * (3f - 2f * settling);
                 var stableContactResolution = StableContactResolution[index] != 0;
                 var idleStable = stableContactResolution && !directControl &&
                                  math.lengthsq(desiredBeforeConstraint) <= 1e-8f;
                 var previousContact = PreviousContacts[index];
+                // Distance selects where packing is allowed; actual local contact density
+                // selects when it is needed. Sparse arrivals keep traveling toward the goal
+                // instead of fanning out before they meet the packed cluster.
+                var localCrowding = math.saturate(previousContact.AgentContactCount * .5f);
+                var packingWeight = packingBlend * localCrowding;
                 if ((directControl || stableContactResolution) && previousContact.HasConstraint != 0 &&
                     previousContact.ConstraintBlocksMovement != 0)
                 {
@@ -630,7 +805,9 @@ namespace LocalAvoidance2D
                 var pressure = directControl
                     ? 0f
                     : math.max(blockingPressure, penetrationPressure);
-                desired *= 1f - pressure * ContactSlowdown;
+                // Predictive crowd slowdown owns the traveling phase. Fade it out while
+                // settling so contact pressure cannot freeze agents before dense packing.
+                desired *= 1f - pressure * ContactSlowdown * (1f - packingWeight);
                 var speed = math.length(desired);
                 var direction = speed > 1e-5f ? desired / speed : float2.zero;
                 // Direct/manual control owns the intended velocity. Collision constraints still
@@ -678,6 +855,12 @@ namespace LocalAvoidance2D
                 DiagnosticCachedNeighbors[index] = cache.Indices;
 #endif
                 var separation = float2.zero;
+                var packingRepulsion = float2.zero;
+                var angularPressure = float2.zero;
+                var radial = destinationEnabled
+                    ? math.normalizesafe(goalOffset, StableDirection(index, -1))
+                    : float2.zero;
+                var tangent = new float2(-radial.y, radial.x);
                 var lateralFlow = float2.zero;
                 var lateralFlowWeight = 0f;
                 var nearestAgentCollisionTime = float.PositiveInfinity;
@@ -699,6 +882,38 @@ namespace LocalAvoidance2D
                     var normal = distanceSqr > 1e-8f ? delta / distance : StableDirection(index, n.Index);
                     var preferred = (Radii[index] + Radii[n.Index]) * PreferredSeparationMultiplier;
                     if (distance < preferred) separation += normal * math.saturate((preferred - distance) / preferred);
+                    if (destinationEnabled && packingWeight > 0f)
+                    {
+                        var otherDestination = Destinations[n.Index];
+                        var regionRadius = math.max(destination.SlowingDistance,
+                            otherDestination.SlowingDistance);
+                        var sameRegion = otherDestination.Enabled != 0 &&
+                                         math.distancesq(destination.Position, otherDestination.Position) <=
+                                         regionRadius * regionRadius;
+                        if (sameRegion)
+                        {
+                            if (distance < preferred)
+                                packingRepulsion += normal *
+                                                    math.saturate((preferred - distance) / preferred);
+
+                            var angularRange = math.min(NeighborDistance,
+                                math.max(preferred * 3f, destination.SlowingDistance));
+                            if (distance < angularRange)
+                            {
+                                var otherRadial = math.normalizesafe(
+                                    Positions[n.Index] - otherDestination.Position,
+                                    StableDirection(n.Index, -1));
+                                var cross = radial.x * otherRadial.y - radial.y * otherRadial.x;
+                                var side = math.abs(cross) > 1e-4f
+                                    ? -math.sign(cross)
+                                    : math.sign(math.dot(normal, tangent));
+                                if (side == 0f) side = ((index ^ n.Index) & 1) == 0 ? 1f : -1f;
+                                var sameAngle = math.saturate((math.dot(radial, otherRadial) + 1f) * .5f);
+                                var proximity = math.saturate(1f - distance / angularRange);
+                                angularPressure += tangent * (side * proximity * sameAngle);
+                            }
+                        }
+                    }
                     var selfVelocity = math.lengthsq(CurrentVelocities[index]) > 1e-6f
                         ? CurrentVelocities[index]
                         : desired;
@@ -784,8 +999,10 @@ namespace LocalAvoidance2D
                 }
                 ObstacleAvoidanceSides[index] = retainedObstacleSide;
                 ObstacleAvoidanceRetentionTimes[index] = obstacleRetentionTime;
-                var agentDetectedScale = float.IsPositiveInfinity(nearestAgentCollisionTime) ? 1f :
+                var rawAgentDetectedScale = float.IsPositiveInfinity(nearestAgentCollisionTime) ? 1f :
                     math.saturate(nearestAgentCollisionTime / CollisionPredictionTime);
+                // Settling continuously hands control from predictive avoidance to packing.
+                var agentDetectedScale = math.lerp(rawAgentDetectedScale, 1f, packingWeight);
                 var obstacleDetectedScale = float.IsPositiveInfinity(nearestObstacleCollisionTime) ? 1f :
                     math.saturate(nearestObstacleCollisionTime / CollisionPredictionTime);
                 var detectedScale = math.min(agentDetectedScale, obstacleDetectedScale);
@@ -796,6 +1013,14 @@ namespace LocalAvoidance2D
                 var separationMagnitude = math.length(separation);
                 var avoidance = math.normalizesafe(separation) * math.saturate(separationMagnitude) *
                                 (speed * SeparationSpeedRatio * avoidanceWeight);
+                if (destinationEnabled && packingWeight > 0f)
+                {
+                    var packing = packingRepulsion + angularPressure * .75f;
+                    var packingMagnitude = math.min(2f, math.length(packing));
+                    avoidance += math.normalizesafe(packing) * packingMagnitude *
+                                 (destination.MaximumSpeed * destination.PackingSpeedRatio *
+                                  packingWeight * avoidanceWeight);
+                }
                 if (speed > 1e-5f && agentDetectedScale < 1f && avoidanceWeight > 0f)
                 {
                     // Use the same relative passing side for every agent. Opposing directions
@@ -818,8 +1043,11 @@ namespace LocalAvoidance2D
                                   (1f - obstacleDetectedScale) * avoidanceWeight);
                 if (lateralFlowWeight > 1e-5f && avoidanceWeight > 0f)
                     avoidance += lateralFlow / lateralFlowWeight *
-                                 (LateralFlowFollowing * avoidanceWeight);
+                                 (LateralFlowFollowing * avoidanceWeight * (1f - packingWeight));
                 var targetVelocity = desired * scale + avoidance;
+                if (destinationEnabled && destination.Sleeping != 0 &&
+                    math.length(targetVelocity) <= destination.WakeSpeed)
+                    targetVelocity = float2.zero;
                 if (directControl && DeltaTime > 1e-6f)
                 {
                     // Immediate input normally resets velocity every frame. Project that input
@@ -888,6 +1116,8 @@ namespace LocalAvoidance2D
             [ReadOnly] public NativeArray<NeighborCacheEntry> NeighborCache;
             [WriteOnly] public NativeArray<float2> CorrectedPositions;
             [ReadOnly] public NativeArray<float2> DesiredVelocities;
+            [ReadOnly] public NativeArray<DestinationAgentData> Destinations;
+            public byte DestinationMode;
             [ReadOnly] public NativeArray<float2> InputVelocities;
             public NativeArray<float2> Velocities;
             public NativeArray<AgentContactState> Contacts;
@@ -959,10 +1189,14 @@ namespace LocalAvoidance2D
                 var priorityContactCounts = default(AgentPriorityContactCounts);
 #endif
                 var previousContact = Contacts[index];
+                var destinationDriven = DestinationMode != 0 && Destinations[index].Enabled != 0;
+                var selfDesired = destinationDriven && Destinations[index].Sleeping != 0
+                    ? float2.zero
+                    : DesiredVelocities[index];
                 var idleStable = stableContactResolution && !directControl &&
-                                 math.lengthsq(DesiredVelocities[index]) <= 1e-8f;
+                                 math.lengthsq(selfDesired) <= 1e-8f;
                 var constrainedVelocity = idleStable ? float2.zero : InputVelocities[index];
-                var movementDirection = math.normalizesafe(DesiredVelocities[index]);
+                var movementDirection = math.normalizesafe(selfDesired);
                 var peerVelocityCorrection = float2.zero;
                 var peerVelocityConstraintCount = 0;
                 var priority = AvoidancePriorities[index];
@@ -1029,9 +1263,13 @@ namespace LocalAvoidance2D
                         var otherInverseMass = 1f / math.max(Masses[other], .0001f);
                         correctionShare = inverseMass / math.max(.0001f, inverseMass + otherInverseMass);
                     }
+                    var otherDesired = DestinationMode != 0 && Destinations[other].Enabled != 0 &&
+                                       Destinations[other].Sleeping != 0
+                        ? float2.zero
+                        : DesiredVelocities[other];
                     var otherIdleStable = StableContactResolution[other] != 0 &&
                                           DirectControl[other] == 0 &&
-                                          math.lengthsq(DesiredVelocities[other]) <= 1e-8f;
+                                          math.lengthsq(otherDesired) <= 1e-8f;
                     if (idleStable != otherIdleStable)
                     {
                         // An idle stable body is a static positional boundary. Correcting it
@@ -1244,7 +1482,9 @@ namespace LocalAvoidance2D
                     // an autonomous agent beyond its authored movement speed. In a compressed
                     // crowd that feedback otherwise raises a 4.8-unit target to 7-8 units and
                     // drives still more agents into the center.
-                    var maximumSpeed = math.length(DesiredVelocities[index]);
+                    var maximumSpeed = destinationDriven
+                        ? (Destinations[index].Sleeping != 0 ? 0f : Destinations[index].MaximumSpeed)
+                        : math.length(selfDesired);
                     var velocityLengthSq = math.lengthsq(constrainedVelocity);
                     if (maximumSpeed <= 1e-5f) constrainedVelocity = float2.zero;
                     else if (velocityLengthSq > maximumSpeed * maximumSpeed)

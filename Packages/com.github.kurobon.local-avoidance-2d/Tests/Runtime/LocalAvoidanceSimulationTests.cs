@@ -676,6 +676,73 @@ namespace LocalAvoidance2D.Tests
                 Is.LessThanOrEqualTo(1.0001f));
         }
 
+        [Test]
+        public void DestinationWritesDistanceScaledVelocity()
+        {
+            using var simulation = Create(1);
+            SetAgent(simulation, 0, float2.zero, float2.zero, .5f);
+            simulation.SetDestination(0, new float2(2f, 0f), 4f, slowingDistance: 1f);
+
+            simulation.Step(1f / 60f, 1);
+            Assert.That(simulation.DesiredVelocities[0].x, Is.EqualTo(4f).Within(1e-5f));
+
+            var positions = simulation.Positions;
+            positions[0] = new float2(1.5f, 0f);
+            simulation.Step(1f / 60f, 1);
+            Assert.That(simulation.DesiredVelocities[0].x, Is.EqualTo(2f).Within(1e-5f));
+        }
+
+        [Test]
+        public void ClearingDestinationReturnsDesiredVelocityToCaller()
+        {
+            using var simulation = Create(1);
+            SetAgent(simulation, 0, float2.zero, float2.zero, .5f);
+            simulation.SetDestination(0, new float2(2f, 0f), 4f);
+            simulation.ClearDestination(0);
+            var desired = simulation.DesiredVelocities;
+            desired[0] = new float2(0f, 3f);
+
+            simulation.Step(1f / 60f, 1);
+
+            Assert.That(simulation.DesiredVelocities[0], Is.EqualTo(new float2(0f, 3f)));
+        }
+
+        [Test]
+        public void PackingPhaseSpreadsAgentsApproachingFromSameSide()
+        {
+            using var simulation = Create(2);
+            SetAgent(simulation, 0, new float2(-.1f, 1f), float2.zero, .2f);
+            SetAgent(simulation, 1, new float2(.1f, 1f), float2.zero, .2f);
+            simulation.SetDestination(0, float2.zero, 2f, slowingDistance: 2f,
+                packingSpeedRatio: 1f);
+            simulation.SetDestination(1, float2.zero, 2f, slowingDistance: 2f,
+                packingSpeedRatio: 1f);
+
+            simulation.Step(1f / 60f, 2);
+            simulation.Step(1f / 60f, 2);
+
+            Assert.That(simulation.ResolvedVelocities[0].x, Is.LessThan(0f));
+            Assert.That(simulation.ResolvedVelocities[1].x, Is.GreaterThan(0f));
+        }
+
+        [Test]
+        public void NearbyDestinationsSharePackingRegion()
+        {
+            using var simulation = Create(2);
+            SetAgent(simulation, 0, new float2(-.1f, 1f), float2.zero, .2f);
+            SetAgent(simulation, 1, new float2(.1f, 1f), float2.zero, .2f);
+            simulation.SetDestination(0, new float2(-.05f, 0f), 2f, slowingDistance: 2f,
+                packingSpeedRatio: 1f);
+            simulation.SetDestination(1, new float2(.05f, 0f), 2f, slowingDistance: 2f,
+                packingSpeedRatio: 1f);
+
+            simulation.Step(1f / 60f, 2);
+            simulation.Step(1f / 60f, 2);
+
+            Assert.That(simulation.ResolvedVelocities[0].x, Is.LessThan(0f));
+            Assert.That(simulation.ResolvedVelocities[1].x, Is.GreaterThan(0f));
+        }
+
         private static LocalAvoidanceSimulation Create(int agents, int obstacles = 0)
         {
             var simulation = new LocalAvoidanceSimulation(agents, obstacles, Allocator.Persistent);

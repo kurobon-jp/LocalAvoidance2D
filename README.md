@@ -26,7 +26,7 @@ It provides 2D crowd simulation without depending on Unity Physics.
 
 ## Usage
 
-Import the bidirectional-flow and rectangular-obstacle examples from the **Samples** tab in Package Manager.
+Import the bidirectional-flow, rectangular-obstacle, and packed-crowd collision examples from the **Samples** tab in Package Manager.
 
 ```csharp
 const int agentCapacity = 10_000;
@@ -378,6 +378,22 @@ How far the contact skin is extended while retaining the constraint that most st
 ### DominantMassRatioThreshold
 
 The mass ratio at which the other agent is treated as the contact that most strongly limits movement. The default is `4` and the minimum is `1`. If the other agent's mass is at least this multiple of the current agent's mass, avoidance and contact constraints stably retain it as difficult to move.
+
+## Destination steering and phased packing
+
+An agent can own an independent point destination without a group identifier:
+
+```csharp
+simulation.SetDestination(agentIndex, destination, maximumSpeed,
+    slowingDistance: 1f,
+    packingSpeedRatio: .6f,
+    sleepSpeed: .02f,
+    wakeSpeed: .05f);
+```
+
+Control changes continuously across three phases. Traveling uses the normal predictive avoidance. Between `2 * slowingDistance` and `slowingDistance`, settling permits a gradual handoff, but activates it only in proportion to actual local agent contacts. Sparse arrivals therefore continue toward the goal instead of spreading early. Dense packing reduces agent prediction and contact slowdown while using destination attraction, short-range separation, destination-relative angular density and the existing Jacobi contact solver. Obstacle prediction remains enabled in every phase.
+
+Destinations separated by no more than the larger `slowingDistance` share a continuous packing region, so small per-agent offsets do not require a group ID. Destination state uses one lazily allocated contiguous array and reuses the existing neighbor search. Call `ClearDestination(agentIndex)` to return `DesiredVelocities` control to the caller; pass `stop: true` to clear it too.
 
 ## Agent input buffers
 

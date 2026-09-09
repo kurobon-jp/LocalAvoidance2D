@@ -28,7 +28,6 @@ namespace LocalAvoidance2D.Samples
         private LocalAvoidanceSimulation _simulation;
         private LocalAvoidanceDiagnostics _diagnostics;
         private Transform[] _views;
-        private float2[] _spawnPositions;
         private Material _agentMaterial;
         private Material _obstacleMaterial;
         private StreamWriter _diagnosticWriter;
@@ -51,7 +50,6 @@ namespace LocalAvoidance2D.Samples
             }
 
             _views = new Transform[agentCount];
-            _spawnPositions = new float2[agentCount];
             _agentMaterial = CreateMaterial(new Color(.15f, .75f, 1f));
             _obstacleMaterial = CreateMaterial(new Color(.15f, .17f, .2f));
 
@@ -66,8 +64,10 @@ namespace LocalAvoidance2D.Samples
                 var column = i % columns;
                 var y = (row - (rows - 1) * .5f) * spacing;
                 var position = new float2(spawnX - column * spacing, y);
-                _spawnPositions[i] = position;
-                _simulation.ActivateAgent(i, position, new float2(speed, 0f), radius);
+                _simulation.ActivateAgent(i, position, float2.zero, radius);
+                _simulation.SetDestination(i, new float2(goalX, 0f), speed,
+                    slowingDistance: 2f,
+                    packingSpeedRatio: .6f);
                 avoidanceWeights[i] = avoidanceWeight;
                 correctionWeights[i] = correctionVelocityWeight;
                 _views[i] = CreateDisc($"Agent {i}", position, radius, _agentMaterial);
@@ -87,16 +87,8 @@ namespace LocalAvoidance2D.Samples
             for (var i = 0; i < agentCount; i++)
             {
                 var position = resolvedPositions[i];
-                if (position.x >= goalX - .05f)
-                {
-                    position = _spawnPositions[i];
-                    _simulation.Teleport(i, position);
-                }
-                else
-                {
-                    currentVelocities[i] = resolvedVelocities[i];
-                    positions[i] = position;
-                }
+                currentVelocities[i] = resolvedVelocities[i];
+                positions[i] = position;
                 _views[i].position = new Vector3(position.x, position.y, 0f);
             }
 
