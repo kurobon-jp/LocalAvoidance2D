@@ -53,7 +53,7 @@ namespace LocalAvoidance2D
         public NativeArray<byte> DirectControl { get; }
         /// <summary>Uses one deterministic deepest contact instead of summing crowd corrections.</summary>
         public NativeArray<byte> StableContactResolution { get; }
-        /// <summary>Retained obstacle passing side: -1 right, 0 unset, 1 left.</summary>
+        /// <summary>Retained obstacle or density-route passing side: -1 right, 0 unset, 1 left.</summary>
         public NativeArray<sbyte> ObstacleAvoidanceSides => _obstacleAvoidanceSides;
         public NativeArray<float> ObstacleAvoidanceRetentionTimes => _obstacleAvoidanceRetentionTimes;
         public NativeArray<Obstacle> Obstacles { get; }
@@ -381,6 +381,7 @@ namespace LocalAvoidance2D
             {
                 move = new DestinationSleepJob
                 {
+                    Positions = Positions,
                     Active = Active,
                     DirectControl = DirectControl,
                     ResolvedVelocities = ResolvedVelocities,
@@ -591,6 +592,7 @@ namespace LocalAvoidance2D
         [BurstCompile]
         private struct DestinationSleepJob : IJobParallelFor
         {
+            [ReadOnly] public NativeArray<float2> Positions;
             [ReadOnly] public NativeArray<byte> Active, DirectControl;
             [ReadOnly] public NativeArray<float2> ResolvedVelocities;
             public NativeArray<DestinationAgentData> Destinations;
@@ -600,11 +602,15 @@ namespace LocalAvoidance2D
                 var destination = Destinations[index];
                 if (Active[index] == 0 || DirectControl[index] != 0 || destination.Enabled == 0) return;
                 var speed = math.length(ResolvedVelocities[index]);
+                var insidePackingRegion = math.distancesq(Positions[index], destination.Position) <=
+                                          destination.SlowingDistance * destination.SlowingDistance;
                 if (destination.Sleeping != 0)
                 {
-                    if (speed > destination.WakeSpeed) destination.Sleeping = 0;
+                    if (!insidePackingRegion || speed > destination.WakeSpeed)
+                        destination.Sleeping = 0;
                 }
-                else if (speed <= destination.SleepSpeed) destination.Sleeping = 1;
+                else if (insidePackingRegion && speed <= destination.SleepSpeed)
+                    destination.Sleeping = 1;
                 Destinations[index] = destination;
             }
         }
@@ -864,6 +870,7 @@ namespace LocalAvoidance2D
                 var lateralFlow = float2.zero;
                 var lateralFlowWeight = 0f;
                 var nearestAgentCollisionTime = float.PositiveInfinity;
+                var avoidanceResponsibility = 1f;
                 var nearestObstacleCollisionTime = float.PositiveInfinity;
                 var nearestObstacleCandidateSide = 1f;
                 for (var i = 0; i < neighbors.Length; i++)
@@ -914,10 +921,14 @@ namespace LocalAvoidance2D
                             }
                         }
                     }
+                    var otherStationary = IsLowMobility(n.Index, Positions,
+                        CurrentVelocities, DesiredVelocities, Destinations, DestinationMode);
                     var selfVelocity = math.lengthsq(CurrentVelocities[index]) > 1e-6f
                         ? CurrentVelocities[index]
                         : desired;
-                    var otherVelocity = math.lengthsq(CurrentVelocities[n.Index]) > 1e-6f
+                    var otherVelocity = otherStationary
+                        ? float2.zero
+                        : math.lengthsq(CurrentVelocities[n.Index]) > 1e-6f
                         ? CurrentVelocities[n.Index]
                         : DesiredVelocities[n.Index];
                     var relativeVelocity = selfVelocity - otherVelocity;
@@ -930,6 +941,7 @@ namespace LocalAvoidance2D
                             distance - Radii[index] - Radii[n.Index]);
                         nearestAgentCollisionTime = math.min(nearestAgentCollisionTime,
                             surfaceDistance / closingSpeed);
+                        if (otherStationary) avoidanceResponsibility = 2f;
                     }
 
                     var otherDirection = math.normalizesafe(DesiredVelocities[n.Index]);
@@ -939,6 +951,91 @@ namespace LocalAvoidance2D
                         var weight = math.saturate(1f - distance / regularSearchDistance);
                         lateralFlow += (otherVelocity - direction * math.dot(otherVelocity, direction)) * weight;
                         lateralFlowWeight += weight;
+                    }
+                }
+                var densityDirection = direction;
+                var densityStrength = 0f;
+                var densitySelectedSide = 0f;
+                if (destinationEnabled && speed > 1e-5f && packingWeight < 1f)
+                {
+                    var cellSize = 1f / InverseCellSize;
+                    var lookAhead = math.min(NeighborDistance,
+                        math.max(cellSize, speed * CollisionPredictionTime + cellSize));
+                    var straightNearDensity = CountStationaryDensity(index,
+                        position + direction * (lookAhead * .5f), InverseCellSize,
+                        Positions, Active, Layers, CollisionMasks, CurrentVelocities, DesiredVelocities,
+                        Destinations, DestinationMode, Grid);
+                    var straightFarDensity = CountStationaryDensity(index,
+                        position + direction * lookAhead, InverseCellSize,
+                        Positions, Active, Layers, CollisionMasks, CurrentVelocities, DesiredVelocities,
+                        Destinations, DestinationMode, Grid);
+                    var straightDensity = straightNearDensity + straightFarDensity * 2;
+                    if (straightDensity > 0)
+                    {
+                        var perpendicular = new float2(-direction.y, direction.x);
+                        var storedSide = ObstacleAvoidanceSides[index];
+                        var storedRetention = ObstacleAvoidanceRetentionTimes[index];
+                        var retainedLateral = math.dot(CurrentVelocities[index], perpendicular);
+                        var retainedSide = storedSide != 0 && storedRetention > 0f
+                            ? storedSide
+                            : math.abs(retainedLateral) > .05f
+                            ? math.sign(retainedLateral)
+                            : 0f;
+                        var preferredSide = retainedSide != 0f
+                            ? retainedSide
+                            : ((index & 1) == 0 ? 1f : -1f);
+                        var straightScore = straightDensity + CandidateCollisionCost(index,
+                            direction, speed, CollisionPredictionTime, neighbors, Positions, Radii,
+                            CurrentVelocities, DesiredVelocities, Destinations, DestinationMode) * 3f;
+                        var currentDirection = math.normalizesafe(CurrentVelocities[index], direction);
+                        straightScore += (1f - math.dot(currentDirection, direction)) * 2.5f;
+                        var bestScore = straightScore;
+                        var bestCandidate = 0;
+                        for (var candidate = -2; candidate <= 2; candidate++)
+                        {
+                            if (candidate == 0) continue;
+                            var angle = candidate * (math.PI / 9f);
+                            var sine = math.sin(angle);
+                            var cosine = math.cos(angle);
+                            var candidateDirection = direction * cosine + perpendicular * sine;
+                            var nearDensity = CountStationaryDensity(index,
+                                position + candidateDirection * (lookAhead * .5f), InverseCellSize,
+                                Positions, Active, Layers, CollisionMasks, CurrentVelocities,
+                                DesiredVelocities, Destinations, DestinationMode, Grid);
+                            var farDensity = CountStationaryDensity(index,
+                                position + candidateDirection * lookAhead, InverseCellSize,
+                                Positions, Active, Layers, CollisionMasks, CurrentVelocities,
+                                DesiredVelocities, Destinations, DestinationMode, Grid);
+                            var deviationCost = math.abs(candidate) * .3f;
+                            var side = math.sign(candidate);
+                            var switchCost = side == preferredSide
+                                ? 0f
+                                : storedSide != 0 && storedRetention > 0f ? 100f : .65f;
+                            var continuityCost =
+                                (1f - math.dot(currentDirection, candidateDirection)) * 2.5f;
+                            var collisionCost = CandidateCollisionCost(index, candidateDirection,
+                                speed, CollisionPredictionTime, neighbors, Positions, Radii,
+                                CurrentVelocities, DesiredVelocities, Destinations, DestinationMode);
+                            var score = nearDensity + farDensity * 2f + collisionCost * 3f +
+                                        deviationCost + switchCost + continuityCost;
+                            if (score < bestScore - 1e-5f ||
+                                math.abs(score - bestScore) <= 1e-5f &&
+                                side == preferredSide)
+                            {
+                                bestScore = score;
+                                bestCandidate = candidate;
+                            }
+                        }
+                        if (bestCandidate != 0)
+                        {
+                            var angle = bestCandidate * (math.PI / 9f);
+                            densityDirection = direction * math.cos(angle) +
+                                               perpendicular * math.sin(angle);
+                            densitySelectedSide = math.sign(bestCandidate);
+                            var improvement = straightScore - bestScore;
+                            densityStrength = math.saturate(improvement * .35f + .35f) *
+                                              (1f - packingWeight);
+                        }
                     }
                 }
                 for (var obstacleIndex = 0; obstacleIndex < ObstacleCount; obstacleIndex++)
@@ -993,6 +1090,15 @@ namespace LocalAvoidance2D
                         retainedObstacleSide = (sbyte)(nearestObstacleCandidateSide >= 0f ? 1 : -1);
                     obstacleRetentionTime = CollisionPredictionTime + .25f;
                 }
+                else if (densityStrength > 0f && densitySelectedSide != 0f)
+                {
+                    // Reuse the existing per-agent avoidance-side state. Obstacles take
+                    // precedence above; otherwise retain the density route long enough to
+                    // cross grid-cell boundaries without alternating left and right.
+                    retainedObstacleSide = (sbyte)densitySelectedSide;
+                    obstacleRetentionTime = math.max(obstacleRetentionTime,
+                        math.max(2f, CollisionPredictionTime * 6f));
+                }
                 else if (obstacleRetentionTime <= 0f)
                 {
                     retainedObstacleSide = 0;
@@ -1034,9 +1140,12 @@ namespace LocalAvoidance2D
                         ? retainedObstacleSide
                         : 1f;
                     avoidance += new float2(-direction.y, direction.x) *
-                                 (side * speed * LateralSpeedRatio *
+                                 (side * speed * LateralSpeedRatio * avoidanceResponsibility *
                                   (1f - agentDetectedScale) * avoidanceWeight);
                 }
+                if (densityStrength > 0f && avoidanceWeight > 0f)
+                    avoidance += (densityDirection - direction) *
+                                 (speed * densityStrength * avoidanceWeight);
                 if (speed > 1e-5f && obstacleDetectedScale < 1f && avoidanceWeight > 0f)
                     avoidance += new float2(-direction.y, direction.x) *
                                  (nearestObstacleSide * speed * LateralSpeedRatio *
@@ -1095,6 +1204,75 @@ namespace LocalAvoidance2D
                     CollisionMasks[index], Obstacles, ObstacleCount, false, out _);
                 ResolvedPositions[index] = resolved;
                 ResolvedVelocities[index] = velocity;
+            }
+
+            private static int CountStationaryDensity(int self, float2 sample, float inverseCellSize,
+                NativeArray<float2> positions, NativeArray<byte> active, NativeArray<uint> layers,
+                NativeArray<uint> collisionMasks, NativeArray<float2> currentVelocities,
+                NativeArray<float2> desiredVelocities, NativeArray<DestinationAgentData> destinations,
+                byte destinationMode,
+                NativeParallelMultiHashMap<int, int>.ReadOnly grid)
+            {
+                var count = 0;
+                if (!grid.TryGetFirstValue(Key(Cell(sample, inverseCellSize)), out var other,
+                        out var iterator)) return 0;
+                do
+                {
+                    var stationary = IsLowMobility(other, positions,
+                        currentVelocities, desiredVelocities, destinations, destinationMode);
+                    if (other != self && stationary && active[other] != 0 &&
+                        (collisionMasks[self] & layers[other]) != 0 &&
+                        (collisionMasks[other] & layers[self]) != 0)
+                        count++;
+                } while (grid.TryGetNextValue(out other, ref iterator));
+                return count;
+            }
+
+            private static float CandidateCollisionCost(int self, float2 candidateDirection,
+                float speed, float horizon, FixedList128Bytes<Neighbor> neighbors,
+                NativeArray<float2> positions, NativeArray<float> radii,
+                NativeArray<float2> currentVelocities, NativeArray<float2> desiredVelocities,
+                NativeArray<DestinationAgentData> destinations, byte destinationMode)
+            {
+                var cost = 0f;
+                var selfVelocity = candidateDirection * speed;
+                for (var i = 0; i < neighbors.Length; i++)
+                {
+                    var other = neighbors[i].Index;
+                    var otherVelocity = IsLowMobility(other, positions, currentVelocities,
+                        desiredVelocities, destinations, destinationMode)
+                        ? float2.zero
+                        : currentVelocities[other];
+                    var relativePosition = positions[other] - positions[self];
+                    var relativeVelocity = otherVelocity - selfVelocity;
+                    var relativeSpeedSq = math.lengthsq(relativeVelocity);
+                    var time = relativeSpeedSq > 1e-6f
+                        ? math.clamp(-math.dot(relativePosition, relativeVelocity) /
+                                     relativeSpeedSq, 0f, horizon)
+                        : 0f;
+                    var closestDistance = math.length(relativePosition + relativeVelocity * time);
+                    var preferred = (radii[self] + radii[other]) * 1.2f;
+                    cost += math.saturate((preferred - closestDistance) / preferred);
+                }
+                return cost;
+            }
+
+            private static bool IsLowMobility(int index, NativeArray<float2> positions,
+                NativeArray<float2> currentVelocities, NativeArray<float2> desiredVelocities,
+                NativeArray<DestinationAgentData> destinations, byte destinationMode)
+            {
+                if (destinationMode != 0 && destinations[index].Enabled != 0)
+                {
+                    var destination = destinations[index];
+                    if (destination.Sleeping != 0) return true;
+                    var settled = math.distancesq(positions[index], destination.Position) <=
+                                  destination.SlowingDistance * destination.SlowingDistance;
+                    var lowSpeed = math.lengthsq(currentVelocities[index]) <=
+                                   math.pow(math.max(.35f, destination.MaximumSpeed * .15f), 2f);
+                    return settled && lowSpeed;
+                }
+                return math.lengthsq(currentVelocities[index]) <= 1e-6f &&
+                       math.lengthsq(desiredVelocities[index]) <= 1e-6f;
             }
         }
 

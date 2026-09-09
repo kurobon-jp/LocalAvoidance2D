@@ -708,6 +708,18 @@ namespace LocalAvoidance2D.Tests
         }
 
         [Test]
+        public void ZeroVelocityOutsidePackingRegionDoesNotSleep()
+        {
+            using var simulation = Create(1);
+            SetAgent(simulation, 0, float2.zero, float2.zero, .5f);
+            simulation.SetDestination(0, new float2(10f, 0f), 0f, slowingDistance: 1f);
+
+            simulation.Step(1f / 60f, 1);
+
+            Assert.That(simulation.IsDestinationSleeping(0), Is.False);
+        }
+
+        [Test]
         public void PackingPhaseSpreadsAgentsApproachingFromSameSide()
         {
             using var simulation = Create(2);

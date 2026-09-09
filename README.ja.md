@@ -456,6 +456,8 @@ simulation.SetDestination(agentIndex, destination, maximumSpeed,
 
 目的地間の距離が双方の大きい方の`slowingDistance`以下なら、同じ連続密集領域として相互作用するため、Agentごとに目的地が少しずれていてもGroup IDは不要です。目的地状態は単一の連続配列として遅延確保され、既存の近傍探索を再利用します。`ClearDestination(agentIndex)`で`DesiredVelocities`の制御を呼び出し側へ戻し、`stop: true`なら同時に速度も消去します。
 
+Traveling中は、移動能力の低い目的地Agentへ相互回避の責任を割り当てず、移動側の横回避を強めます。前方に低速Agent密度を検出すると、直進と±20°、±40°の4方向を評価します。各候補のスコアには2地点の先読み密度、個別の近傍Agentとの予測衝突、目的地方向からのずれ、回避側の切り替えコストが含まれ、選択した側は一時的に密度を見失っても保持されます。密集群をObstacleへ変換したりCluster IDを割り当てたりはしません。目的地移動を使わない場合や前方に低速Agentがいない場合、候補評価は実行されません。
+
 ## Agent input buffers
 
 | バッファ | 内容 |

@@ -10,4 +10,4 @@ The sample demonstrates the transition from predictive travel to contact-density
 When **Enable Diagnostic Log** is enabled, the sample writes
 `local-avoidance-packed-collision-<timestamp>.csv` under `Application.persistentDataPath`.
 The log identifies packed and moving agents and records destination sleep state, contacts,
-resolved velocity, and the first and last Jacobi corrections.
+resolved velocity, retained avoidance side and time, and the first and last Jacobi corrections.

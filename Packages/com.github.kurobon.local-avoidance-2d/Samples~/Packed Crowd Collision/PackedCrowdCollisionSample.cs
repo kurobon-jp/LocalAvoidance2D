@@ -130,6 +130,7 @@ namespace LocalAvoidance2D.Samples
             _diagnosticWriter.WriteLine(
                 "frame,time,index,group,pos_x,pos_y,desired_x,desired_y,resolved_vx,resolved_vy," +
                 "speed,contacts,blocking_contacts,touching,constraint,sleeping," +
+                "retained_avoidance_side,side_retention_time," +
                 "first_correction_x,first_correction_y,last_correction_x,last_correction_y," +
                 "joins_packed_destination,neighbor_distance");
             Debug.Log($"[LocalAvoidance.PackedCollision] Diagnostic log: {path}");
@@ -143,6 +144,8 @@ namespace LocalAvoidance2D.Samples
             var desired = _simulation.DesiredVelocities;
             var velocities = _simulation.ResolvedVelocities;
             var contacts = _simulation.Contacts;
+            var retainedSides = _simulation.ObstacleAvoidanceSides;
+            var retentionTimes = _simulation.ObstacleAvoidanceRetentionTimes;
             var lastIteration = math.min(_simulation.Settings.SolverIterations,
                 LocalAvoidanceDiagnostics.MaximumSolverIterations) - 1;
             var invariant = CultureInfo.InvariantCulture;
@@ -178,6 +181,9 @@ namespace LocalAvoidance2D.Samples
                 _diagnosticWriter.Write(contact.HasConstraint);
                 _diagnosticWriter.Write(',');
                 _diagnosticWriter.Write(_simulation.IsDestinationSleeping(i) ? 1 : 0);
+                _diagnosticWriter.Write(',');
+                _diagnosticWriter.Write(retainedSides[i]);
+                WriteFloat(retentionTimes[i], invariant);
                 WriteFloat(firstCorrection.x, invariant);
                 WriteFloat(firstCorrection.y, invariant);
                 WriteFloat(lastCorrection.x, invariant);
