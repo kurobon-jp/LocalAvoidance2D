@@ -214,6 +214,76 @@ namespace LocalAvoidance2D.Tests
         }
 
         [Test]
+        public void CircleObstacleUsesTangentRouteAndReturnsToGoalDirection()
+        {
+            using var simulation = Create(1, 1);
+            SetAgent(simulation, 0, new float2(-5f, 0f), new float2(2.5f, 0f), .22f);
+            var settings = simulation.Settings;
+            settings.CollisionPredictionTime = .75f;
+            simulation.Settings = settings;
+            var obstacles = simulation.Obstacles;
+            obstacles[0] = Obstacle.Circle(float2.zero, 1f, 1u, 1u);
+
+            var minimumClearance = float.PositiveInfinity;
+            var positions = simulation.Positions;
+            var currentVelocities = simulation.CurrentVelocities;
+            for (var frame = 0; frame < 600; frame++)
+            {
+                simulation.Step(1f / 60f, 1, 1);
+                var position = simulation.ResolvedPositions[0];
+                var velocity = simulation.ResolvedVelocities[0];
+                positions[0] = position;
+                currentVelocities[0] = velocity;
+                minimumClearance = math.min(minimumClearance,
+                    math.length(position) - 1f - .22f);
+            }
+
+            Assert.That(minimumClearance, Is.GreaterThanOrEqualTo(-.001f));
+            Assert.That(simulation.Positions[0].x, Is.GreaterThan(4f));
+            Assert.That(math.abs(simulation.CurrentVelocities[0].y), Is.LessThan(.2f));
+        }
+
+        [TestCase(1)]
+        [TestCase(25)]
+        [TestCase(64)]
+        public void MultipleAgentsRemainOutsideCircleDuringTangentAvoidance(int count)
+        {
+            using var simulation = Create(count, 1);
+            var spacing = .22f * 2.5f;
+            var columns = (int)math.ceil(math.sqrt(count));
+            for (var i = 0; i < count; i++)
+            {
+                var row = i / columns;
+                var column = i % columns;
+                var rows = (int)math.ceil(count / (float)columns);
+                var offset = new float2(column * spacing,
+                    (row - (rows - 1) * .5f) * spacing);
+                SetAgent(simulation, i, new float2(-5f, 0f) - offset,
+                    new float2(2.5f, 0f), .22f);
+            }
+            var obstacles = simulation.Obstacles;
+            obstacles[0] = Obstacle.Circle(float2.zero, 1f, 1u, 1u);
+
+            var positions = simulation.Positions;
+            var currentVelocities = simulation.CurrentVelocities;
+            var minimumClearance = float.PositiveInfinity;
+            for (var frame = 0; frame < 900; frame++)
+            {
+                simulation.Step(1f / 60f, count, 1);
+                for (var i = 0; i < count; i++)
+                {
+                    var position = simulation.ResolvedPositions[i];
+                    positions[i] = position;
+                    currentVelocities[i] = simulation.ResolvedVelocities[i];
+                    minimumClearance = math.min(minimumClearance,
+                        math.length(position) - 1f - .22f);
+                }
+            }
+
+            Assert.That(minimumClearance, Is.GreaterThanOrEqualTo(-.001f));
+        }
+
+        [Test]
         public void SegmentObstaclePushesAgentToItsSurface()
         {
             using var simulation = Create(1, 1);
