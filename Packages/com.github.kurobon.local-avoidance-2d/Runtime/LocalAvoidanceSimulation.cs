@@ -683,6 +683,7 @@ namespace LocalAvoidance2D
                 var nearestAgentCollisionTime = float.PositiveInfinity;
                 var nearestObstacleCollisionTime = float.PositiveInfinity;
                 var nearestObstacleCandidateSide = 1f;
+                var nearestObstacleIndex = -1;
                 for (var i = 0; i < neighbors.Length; i++)
                 {
                     var n = neighbors[i];
@@ -747,6 +748,7 @@ namespace LocalAvoidance2D
                     var collisionTime = surfaceDistance / closingSpeed;
                     if (collisionTime >= nearestObstacleCollisionTime) continue;
                     nearestObstacleCollisionTime = collisionTime;
+                    nearestObstacleIndex = obstacleIndex;
                     var perpendicular = new float2(-direction.y, direction.x);
                     float lateralDot;
                     if (obstacle.Shape == ObstacleShape.Segment)
@@ -788,7 +790,37 @@ namespace LocalAvoidance2D
                     math.saturate(nearestAgentCollisionTime / CollisionPredictionTime);
                 var obstacleDetectedScale = float.IsPositiveInfinity(nearestObstacleCollisionTime) ? 1f :
                     math.saturate(nearestObstacleCollisionTime / CollisionPredictionTime);
-                var detectedScale = math.min(agentDetectedScale, obstacleDetectedScale);
+                var obstacleTangentActive = obstacleDetectedScale < 1f && nearestObstacleIndex >= 0;
+                var steeredDesired = desired;
+                if (obstacleTangentActive && speed > 1e-5f && avoidanceWeight > 0f)
+                {
+                    var obstacle = Obstacles[nearestObstacleIndex];
+                    // Expand every obstacle by both geometric clearance and the distance
+                    // travelled during one velocity-response time constant. The closest point
+                    // on a segment's spine makes this the local boundary of its expanded
+                    // capsule, so circles and segments share the same steering response.
+                    var responseLagDistance = VelocityResponse > 1e-5f
+                        ? math.min(speed / VelocityResponse, speed * CollisionPredictionTime)
+                        : 0f;
+                    var expandedRadius = Radii[index] + obstacle.Radius +
+                                         math.max(.02f, Radii[index] * .5f) + responseLagDistance;
+                    GetObstacleTangentDirections(obstacle, position, expandedRadius, index,
+                        nearestObstacleIndex, out var tangentA, out var tangentB);
+                    var desiredPerpendicular = new float2(-direction.y, direction.x);
+                    var sideA = math.dot(tangentA, desiredPerpendicular);
+                    var tangentDirection = nearestObstacleSide >= 0f
+                        ? (sideA >= 0f ? tangentA : tangentB)
+                        : (sideA < 0f ? tangentA : tangentB);
+                    var tangentWeight = math.saturate((1f - obstacleDetectedScale) *
+                                                      avoidanceWeight);
+                    var blendedDirection = math.normalizesafe(
+                        math.lerp(direction, tangentDirection, tangentWeight), direction);
+                    steeredDesired = blendedDirection * speed;
+                }
+                // Obstacle tangents replace obstacle braking. Agent prediction retains the
+                // existing time-to-collision slowdown.
+                var effectiveObstacleScale = obstacleTangentActive ? 1f : obstacleDetectedScale;
+                var detectedScale = math.min(agentDetectedScale, effectiveObstacleScale);
                 var scale = math.lerp(1f, detectedScale, math.saturate(avoidanceWeight));
                 // Preserve the penetration ratio accumulated in separation. Normalizing the
                 // vector unconditionally turns even floating-point noise at the preferred
@@ -812,14 +844,15 @@ namespace LocalAvoidance2D
                                  (side * speed * LateralSpeedRatio *
                                   (1f - agentDetectedScale) * avoidanceWeight);
                 }
-                if (speed > 1e-5f && obstacleDetectedScale < 1f && avoidanceWeight > 0f)
+                if (!obstacleTangentActive && speed > 1e-5f && obstacleDetectedScale < 1f &&
+                    avoidanceWeight > 0f)
                     avoidance += new float2(-direction.y, direction.x) *
                                  (nearestObstacleSide * speed * LateralSpeedRatio *
                                   (1f - obstacleDetectedScale) * avoidanceWeight);
                 if (lateralFlowWeight > 1e-5f && avoidanceWeight > 0f)
                     avoidance += lateralFlow / lateralFlowWeight *
                                  (LateralFlowFollowing * avoidanceWeight);
-                var targetVelocity = desired * scale + avoidance;
+                var targetVelocity = steeredDesired * scale + avoidance;
                 if (directControl && DeltaTime > 1e-6f)
                 {
                     // Immediate input normally resets velocity every frame. Project that input
@@ -1476,6 +1509,25 @@ namespace LocalAvoidance2D
                 contact.ObstacleContactCount++;
                 contact.CombinedNormal += normal;
             }
+        }
+
+        private static void GetObstacleTangentDirections(Obstacle obstacle, float2 position,
+            float expandedRadius, int agentIndex, int obstacleIndex,
+            out float2 tangentA, out float2 tangentB)
+        {
+            var boundaryCenter = obstacle.Shape == ObstacleShape.Circle
+                ? obstacle.PointA
+                : ClosestPoint(position, obstacle.PointA, obstacle.PointB);
+            var centerOffset = position - boundaryCenter;
+            var centerDistance = math.length(centerOffset);
+            var outward = math.normalizesafe(centerOffset,
+                StableDirection(agentIndex, -obstacleIndex - 1));
+            var tangentRatio = math.saturate(expandedRadius /
+                                             math.max(centerDistance, expandedRadius));
+            var radialComponent = math.sqrt(math.max(0f, 1f - tangentRatio * tangentRatio));
+            var around = new float2(-outward.y, outward.x);
+            tangentA = -outward * radialComponent + around * tangentRatio;
+            tangentB = -outward * radialComponent - around * tangentRatio;
         }
 
         private static float2 ClosestPoint(float2 point, float2 a, float2 b)
