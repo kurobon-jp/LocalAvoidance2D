@@ -9,6 +9,10 @@
     "com.unity.collections": "2.5.0",
     "com.unity.mathematics": "1.3.0"
   },
+  "author": {
+    "name": "kurobon",
+    "url": "https://github.com/kurobon-jp/LocalAvoidance2D"
+  },
   "keywords": ["local avoidance", "crowd", "burst", "jobs", "2d"],
   "samples": [
     {
