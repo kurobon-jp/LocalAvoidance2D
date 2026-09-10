@@ -1019,6 +1019,42 @@ namespace LocalAvoidance2D
                 var agentDetectedScale = math.lerp(rawAgentDetectedScale, 1f, packingWeight);
                 var obstacleDetectedScale = float.IsPositiveInfinity(nearestObstacleCollisionTime) ? 1f :
                     math.saturate(nearestObstacleCollisionTime / CollisionPredictionTime);
+                var gapDirection = direction;
+                var gapStrength = 0f;
+                var crowdBlocked = destinationEnabled && packingWeight < .8f &&
+                                   avoidanceResponsibility > 1f &&
+                                   nearestAgentCollisionTime < CollisionPredictionTime;
+                if (crowdBlocked && speed > 1e-5f)
+                {
+                    var gapCellSize = 1f / InverseCellSize;
+                    var gapLookAhead = math.min(NeighborDistance,
+                        math.max(gapCellSize, speed * CollisionPredictionTime + gapCellSize));
+                    var gapPerpendicular = new float2(-direction.y, direction.x);
+                    var leftDensity = CountStationaryDensity(index,
+                        position + gapPerpendicular * (gapLookAhead * .5f), InverseCellSize,
+                        Positions, Active, Layers, CollisionMasks, CurrentVelocities,
+                        DesiredVelocities, Destinations, DestinationMode, Grid) +
+                        CountStationaryDensity(index,
+                            position + gapPerpendicular * gapLookAhead, InverseCellSize,
+                            Positions, Active, Layers, CollisionMasks, CurrentVelocities,
+                            DesiredVelocities, Destinations, DestinationMode, Grid) * 2;
+                    var rightDensity = CountStationaryDensity(index,
+                        position - gapPerpendicular * (gapLookAhead * .5f), InverseCellSize,
+                        Positions, Active, Layers, CollisionMasks, CurrentVelocities,
+                        DesiredVelocities, Destinations, DestinationMode, Grid) +
+                        CountStationaryDensity(index,
+                            position - gapPerpendicular * gapLookAhead, InverseCellSize,
+                            Positions, Active, Layers, CollisionMasks, CurrentVelocities,
+                            DesiredVelocities, Destinations, DestinationMode, Grid) * 2;
+                    var lateralVelocity = math.dot(CurrentVelocities[index], gapPerpendicular);
+                    var selectedSide = math.abs(leftDensity - rightDensity) > 1e-4f
+                        ? leftDensity < rightDensity ? 1f : -1f
+                        : math.abs(lateralVelocity) > .05f ? math.sign(lateralVelocity) : 1f;
+                    gapDirection = math.normalizesafe(direction +
+                        gapPerpendicular * selectedSide * .9f, direction);
+                    gapStrength = math.saturate(.55f +
+                        math.abs(leftDensity - rightDensity) * .15f);
+                }
                 var circleTangentActive = obstacleDetectedScale < 1f && nearestObstacleIndex >= 0 &&
                                           Obstacles[nearestObstacleIndex].Shape == ObstacleShape.Circle;
                 var steeredDesired = desired;
@@ -1095,6 +1131,9 @@ namespace LocalAvoidance2D
                 if (lateralFlowWeight > 1e-5f && avoidanceWeight > 0f)
                     avoidance += lateralFlow / lateralFlowWeight *
                                  (LateralFlowFollowing * avoidanceWeight * (1f - packingWeight));
+                if (gapStrength > 0f && avoidanceWeight > 0f)
+                    avoidance += (gapDirection - direction) *
+                                 (speed * gapStrength * avoidanceWeight);
                 var targetVelocity = steeredDesired * scale + avoidance;
                 if (destinationEnabled && destination.Sleeping != 0 &&
                     math.length(targetVelocity) <= destination.WakeSpeed)
@@ -1146,6 +1185,27 @@ namespace LocalAvoidance2D
                     CollisionMasks[index], Obstacles, ObstacleCount, false, out _);
                 ResolvedPositions[index] = resolved;
                 ResolvedVelocities[index] = velocity;
+            }
+
+            private static int CountStationaryDensity(int self, float2 sample, float inverseCellSize,
+                NativeArray<float2> positions, NativeArray<byte> active, NativeArray<uint> layers,
+                NativeArray<uint> collisionMasks, NativeArray<float2> currentVelocities,
+                NativeArray<float2> desiredVelocities, NativeArray<DestinationAgentData> destinations,
+                byte destinationMode, NativeParallelMultiHashMap<int, int>.ReadOnly grid)
+            {
+                var count = 0;
+                if (!grid.TryGetFirstValue(Key(Cell(sample, inverseCellSize)), out var other,
+                        out var iterator)) return 0;
+                do
+                {
+                    if (other != self && active[other] != 0 &&
+                        (collisionMasks[self] & layers[other]) != 0 &&
+                        (collisionMasks[other] & layers[self]) != 0 &&
+                        IsLowMobility(other, positions, currentVelocities,
+                            desiredVelocities, destinations, destinationMode))
+                        count++;
+                } while (grid.TryGetNextValue(out other, ref iterator));
+                return count;
             }
 
             private static bool IsLowMobility(int index, NativeArray<float2> positions,
