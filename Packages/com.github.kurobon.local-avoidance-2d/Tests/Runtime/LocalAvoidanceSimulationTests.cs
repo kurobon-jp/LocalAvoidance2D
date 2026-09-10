@@ -243,6 +243,35 @@ namespace LocalAvoidance2D.Tests
             Assert.That(math.abs(simulation.CurrentVelocities[0].y), Is.LessThan(.2f));
         }
 
+        [Test]
+        public void FastAgentWithSlowVelocityResponseClearsCircleWithoutContact()
+        {
+            using var simulation = Create(1, 1);
+            SetAgent(simulation, 0, new float2(-12f, 0f), new float2(10f, 0f), .22f);
+            var settings = simulation.Settings;
+            settings.CollisionPredictionTime = 1f;
+            settings.VelocityResponse = 2f;
+            simulation.Settings = settings;
+            var obstacles = simulation.Obstacles;
+            obstacles[0] = Obstacle.Circle(float2.zero, 1f, 1u, 1u);
+
+            var touchedObstacle = false;
+            var positions = simulation.Positions;
+            var currentVelocities = simulation.CurrentVelocities;
+            for (var frame = 0; frame < 180; frame++)
+            {
+                simulation.Step(1f / 30f, 1, 1);
+                touchedObstacle |= simulation.Contacts[0].ObstacleContactCount > 0;
+                positions[0] = simulation.ResolvedPositions[0];
+                currentVelocities[0] = simulation.ResolvedVelocities[0];
+            }
+
+            Assert.That(touchedObstacle, Is.False,
+                "Tangent steering should not rely on post-movement depenetration.");
+            Assert.That(simulation.Positions[0].x, Is.GreaterThan(8f));
+            Assert.That(math.abs(simulation.CurrentVelocities[0].y), Is.LessThan(.2f));
+        }
+
         [TestCase(1)]
         [TestCase(25)]
         [TestCase(64)]
@@ -311,6 +340,33 @@ namespace LocalAvoidance2D.Tests
 
             Assert.That(simulation.ResolvedVelocities[0].y * expectedSide, Is.GreaterThan(0f));
             Assert.That(simulation.Contacts[0].ObstacleContactCount, Is.Zero);
+        }
+
+        [Test]
+        public void SegmentUsesTangentRouteAndReturnsToGoalDirection()
+        {
+            using var simulation = Create(1, 1);
+            SetAgent(simulation, 0, new float2(-4f, 0f), new float2(2f, 0f), .22f);
+            var settings = simulation.Settings;
+            settings.CollisionPredictionTime = 1f;
+            simulation.Settings = settings;
+            var obstacles = simulation.Obstacles;
+            obstacles[0] = Obstacle.Segment(new float2(0f, -2f), new float2(0f, 2f), .1f, 1u, 1u);
+
+            var touchedObstacle = false;
+            var positions = simulation.Positions;
+            var currentVelocities = simulation.CurrentVelocities;
+            for (var frame = 0; frame < 600; frame++)
+            {
+                simulation.Step(1f / 60f, 1, 1);
+                touchedObstacle |= simulation.Contacts[0].ObstacleContactCount > 0;
+                positions[0] = simulation.ResolvedPositions[0];
+                currentVelocities[0] = simulation.ResolvedVelocities[0];
+            }
+
+            Assert.That(touchedObstacle, Is.False);
+            Assert.That(simulation.Positions[0].x, Is.GreaterThan(3f));
+            Assert.That(math.abs(simulation.CurrentVelocities[0].y), Is.LessThan(.2f));
         }
 
         [Test]

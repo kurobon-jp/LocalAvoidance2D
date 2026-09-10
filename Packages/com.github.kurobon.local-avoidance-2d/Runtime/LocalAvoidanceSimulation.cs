@@ -1055,28 +1055,22 @@ namespace LocalAvoidance2D
                     gapStrength = math.saturate(.55f +
                         math.abs(leftDensity - rightDensity) * .15f);
                 }
-                var circleTangentActive = obstacleDetectedScale < 1f && nearestObstacleIndex >= 0 &&
-                                          Obstacles[nearestObstacleIndex].Shape == ObstacleShape.Circle;
+                var obstacleTangentActive = obstacleDetectedScale < 1f && nearestObstacleIndex >= 0;
                 var steeredDesired = desired;
-                if (circleTangentActive && speed > 1e-5f && avoidanceWeight > 0f)
+                if (obstacleTangentActive && speed > 1e-5f && avoidanceWeight > 0f)
                 {
                     var obstacle = Obstacles[nearestObstacleIndex];
-                    var centerOffset = position - obstacle.PointA;
-                    var centerDistance = math.length(centerOffset);
-                    var outward = math.normalizesafe(centerOffset,
-                        StableDirection(index, -nearestObstacleIndex - 1));
-                    // Aim at a tangent of a slightly expanded circle. The expansion absorbs
-                    // velocity-response lag without introducing the prolonged radial braking
-                    // used by the generic obstacle response.
-                    var tangentRadius = Radii[index] + obstacle.Radius +
-                                        math.max(.02f, Radii[index] * .5f);
-                    var tangentRatio = math.saturate(tangentRadius /
-                                                     math.max(centerDistance, tangentRadius));
-                    var radialComponent = math.sqrt(math.max(0f,
-                        1f - tangentRatio * tangentRatio));
-                    var around = new float2(-outward.y, outward.x);
-                    var tangentA = -outward * radialComponent + around * tangentRatio;
-                    var tangentB = -outward * radialComponent - around * tangentRatio;
+                    // Expand every obstacle by both geometric clearance and the distance
+                    // travelled during one velocity-response time constant. The closest point
+                    // on a segment's spine makes this the local boundary of its expanded
+                    // capsule, so circles and segments share the same steering response.
+                    var responseLagDistance = VelocityResponse > 1e-5f
+                        ? math.min(speed / VelocityResponse, speed * CollisionPredictionTime)
+                        : 0f;
+                    var expandedRadius = Radii[index] + obstacle.Radius +
+                                         math.max(.02f, Radii[index] * .5f) + responseLagDistance;
+                    GetObstacleTangentDirections(obstacle, position, expandedRadius, index,
+                        nearestObstacleIndex, out var tangentA, out var tangentB);
                     var desiredPerpendicular = new float2(-direction.y, direction.x);
                     var sideA = math.dot(tangentA, desiredPerpendicular);
                     var tangentDirection = nearestObstacleSide >= 0f
@@ -1088,9 +1082,9 @@ namespace LocalAvoidance2D
                         math.lerp(direction, tangentDirection, tangentWeight), direction);
                     steeredDesired = blendedDirection * speed;
                 }
-                // Circle tangents replace obstacle braking. Agent prediction and segment
-                // obstacles retain the existing time-to-collision slowdown.
-                var effectiveObstacleScale = circleTangentActive ? 1f : obstacleDetectedScale;
+                // Obstacle tangents replace obstacle braking. Agent prediction retains the
+                // existing time-to-collision slowdown.
+                var effectiveObstacleScale = obstacleTangentActive ? 1f : obstacleDetectedScale;
                 var detectedScale = math.min(agentDetectedScale, effectiveObstacleScale);
                 var scale = math.lerp(1f, detectedScale, math.saturate(avoidanceWeight));
                 // Preserve the penetration ratio accumulated in separation. Normalizing the
@@ -1123,7 +1117,7 @@ namespace LocalAvoidance2D
                                  (side * speed * LateralSpeedRatio * avoidanceResponsibility *
                                   (1f - agentDetectedScale) * avoidanceWeight);
                 }
-                if (!circleTangentActive && speed > 1e-5f && obstacleDetectedScale < 1f &&
+                if (!obstacleTangentActive && speed > 1e-5f && obstacleDetectedScale < 1f &&
                     avoidanceWeight > 0f)
                     avoidance += new float2(-direction.y, direction.x) *
                                  (nearestObstacleSide * speed * LateralSpeedRatio *
@@ -1845,6 +1839,25 @@ namespace LocalAvoidance2D
                 contact.ObstacleContactCount++;
                 contact.CombinedNormal += normal;
             }
+        }
+
+        private static void GetObstacleTangentDirections(Obstacle obstacle, float2 position,
+            float expandedRadius, int agentIndex, int obstacleIndex,
+            out float2 tangentA, out float2 tangentB)
+        {
+            var boundaryCenter = obstacle.Shape == ObstacleShape.Circle
+                ? obstacle.PointA
+                : ClosestPoint(position, obstacle.PointA, obstacle.PointB);
+            var centerOffset = position - boundaryCenter;
+            var centerDistance = math.length(centerOffset);
+            var outward = math.normalizesafe(centerOffset,
+                StableDirection(agentIndex, -obstacleIndex - 1));
+            var tangentRatio = math.saturate(expandedRadius /
+                                             math.max(centerDistance, expandedRadius));
+            var radialComponent = math.sqrt(math.max(0f, 1f - tangentRatio * tangentRatio));
+            var around = new float2(-outward.y, outward.x);
+            tangentA = -outward * radialComponent + around * tangentRatio;
+            tangentB = -outward * radialComponent - around * tangentRatio;
         }
 
         private static float2 ClosestPoint(float2 point, float2 a, float2 b)
