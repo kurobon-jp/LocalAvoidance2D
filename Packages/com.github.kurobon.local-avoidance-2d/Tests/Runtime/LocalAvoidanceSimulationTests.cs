@@ -343,6 +343,33 @@ namespace LocalAvoidance2D.Tests
         }
 
         [Test]
+        public void SegmentUsesTangentRouteAndReturnsToGoalDirection()
+        {
+            using var simulation = Create(1, 1);
+            SetAgent(simulation, 0, new float2(-4f, 0f), new float2(2f, 0f), .22f);
+            var settings = simulation.Settings;
+            settings.CollisionPredictionTime = 1f;
+            simulation.Settings = settings;
+            var obstacles = simulation.Obstacles;
+            obstacles[0] = Obstacle.Segment(new float2(0f, -2f), new float2(0f, 2f), .1f, 1u, 1u);
+
+            var touchedObstacle = false;
+            var positions = simulation.Positions;
+            var currentVelocities = simulation.CurrentVelocities;
+            for (var frame = 0; frame < 600; frame++)
+            {
+                simulation.Step(1f / 60f, 1, 1);
+                touchedObstacle |= simulation.Contacts[0].ObstacleContactCount > 0;
+                positions[0] = simulation.ResolvedPositions[0];
+                currentVelocities[0] = simulation.ResolvedVelocities[0];
+            }
+
+            Assert.That(touchedObstacle, Is.False);
+            Assert.That(simulation.Positions[0].x, Is.GreaterThan(3f));
+            Assert.That(math.abs(simulation.CurrentVelocities[0].y), Is.LessThan(.2f));
+        }
+
+        [Test]
         public void LowerObstacleRouteAlsoAlignsAgentPassingDownward()
         {
             using var simulation = Create(2, 1);

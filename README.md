@@ -186,7 +186,7 @@ Agents with `DirectControl` or `StableContactResolution` enabled are examined se
 CollisionPredictionTime = 0.5f;
 ```
 
-How many seconds ahead the solver considers a collision while current velocities are maintained. For example, `0.5` applies forward slowdown and lateral avoidance to objects that would be contacted within half a second.
+How many seconds ahead the solver considers a collision while current velocities are maintained. For example, `0.5` applies forward slowdown and lateral avoidance to agents, and tangent steering to obstacles, that would be contacted within half a second.
 
 ```text
 prediction time = surface distance between agents / relative approach speed
@@ -231,10 +231,10 @@ A typical tuning range is `0.25` to `0.6`.
 LateralSpeedRatio = 0.15f;
 ```
 
-The lateral velocity ratio applied when an agent or obstacle is ahead. Agents choose a consistent passing side. For segment obstacles, the nearer endpoint is preferred and the choice is retained briefly to prevent direction flips around corners.
+The lateral velocity ratio applied when another agent is ahead. Agents choose a consistent passing side. Obstacle avoidance uses tangent steering instead of this additional lateral velocity.
 
-- `0` disables lateral avoidance and relies mainly on slowdown.
-- Larger values route more aggressively around objects ahead.
+- `0` disables additional lateral avoidance between agents and relies mainly on slowdown.
+- Larger values route more aggressively around agents ahead.
 - Excessive values can produce weaving and crowd dispersion.
 
 Start around `0.1` to `0.3`.
@@ -490,7 +490,7 @@ obstacles[0] = Obstacle.Segment(
 
 A segment extends from `PointA` to `PointB`. With `radius = 0` it is a line wall; with a positive radius it behaves as a capsule-shaped wall. Negative radii are clamped to `0`.
 
-When an agent will approach an obstacle within `CollisionPredictionTime`, a circle continuously rotates the desired direction toward a tangent of the expanded circle while preserving requested speed. The tangent includes half an agent radius of geometric clearance plus up to one velocity-response time constant of travel, capped by the prediction horizon. Segment obstacles retain the generic slowdown and lateral steering response and favor the nearer endpoint. The chosen passing side is retained slightly beyond the prediction period to prevent avoidance direction from flipping. If prediction is too late, the post-movement non-penetration constraint returns the agent to the obstacle surface.
+When an agent will approach an obstacle within `CollisionPredictionTime`, it continuously rotates the desired direction toward a tangent of the expanded obstacle while preserving requested speed. Circles use their center, while segments use the closest point on their spine and therefore behave as expanded capsules. The expansion includes half an agent radius of geometric clearance plus up to one velocity-response time constant of travel, capped by the prediction horizon. The chosen passing side is retained slightly beyond the prediction period to prevent avoidance direction from flipping. If prediction is too late, the post-movement non-penetration constraint returns the agent to the obstacle surface.
 
 Agent-to-obstacle filtering also checks both masks:
 
