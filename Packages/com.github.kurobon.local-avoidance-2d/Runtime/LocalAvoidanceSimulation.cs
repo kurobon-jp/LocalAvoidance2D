@@ -800,11 +800,15 @@ namespace LocalAvoidance2D
                     var centerDistance = math.length(centerOffset);
                     var outward = math.normalizesafe(centerOffset,
                         StableDirection(index, -nearestObstacleIndex - 1));
-                    // Aim at a tangent of a slightly expanded circle. The expansion absorbs
-                    // velocity-response lag without introducing the prolonged radial braking
-                    // used by the generic obstacle response.
+                    // Aim at a tangent of an expanded circle. In addition to a small geometric
+                    // clearance, reserve the distance travelled during one velocity-response
+                    // time constant. Cap it to the prediction horizon so a very low response
+                    // does not create an unbounded detour.
+                    var responseLagDistance = VelocityResponse > 1e-5f
+                        ? math.min(speed / VelocityResponse, speed * CollisionPredictionTime)
+                        : 0f;
                     var tangentRadius = Radii[index] + obstacle.Radius +
-                                        math.max(.02f, Radii[index] * .5f);
+                                        math.max(.02f, Radii[index] * .5f) + responseLagDistance;
                     var tangentRatio = math.saturate(tangentRadius /
                                                      math.max(centerDistance, tangentRadius));
                     var radialComponent = math.sqrt(math.max(0f,

@@ -490,7 +490,7 @@ obstacles[0] = Obstacle.Segment(
 
 A segment extends from `PointA` to `PointB`. With `radius = 0` it is a line wall; with a positive radius it behaves as a capsule-shaped wall. Negative radii are clamped to `0`.
 
-When an agent will approach an obstacle within `CollisionPredictionTime`, a circle continuously rotates the desired direction toward a tangent of the expanded circle while preserving requested speed. The tangent includes half an agent radius of clearance to absorb velocity-response lag. Segment obstacles retain the generic slowdown and lateral steering response and favor the nearer endpoint. The chosen passing side is retained slightly beyond the prediction period to prevent avoidance direction from flipping. If prediction is too late, the post-movement non-penetration constraint returns the agent to the obstacle surface.
+When an agent will approach an obstacle within `CollisionPredictionTime`, a circle continuously rotates the desired direction toward a tangent of the expanded circle while preserving requested speed. The tangent includes half an agent radius of geometric clearance plus up to one velocity-response time constant of travel, capped by the prediction horizon. Segment obstacles retain the generic slowdown and lateral steering response and favor the nearer endpoint. The chosen passing side is retained slightly beyond the prediction period to prevent avoidance direction from flipping. If prediction is too late, the post-movement non-penetration constraint returns the agent to the obstacle surface.
 
 Agent-to-obstacle filtering also checks both masks:
 
