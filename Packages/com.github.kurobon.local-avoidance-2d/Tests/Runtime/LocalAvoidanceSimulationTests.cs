@@ -57,6 +57,8 @@ namespace LocalAvoidance2D.Tests
         {
             using var simulation = Create(1);
             SetAgent(simulation, 0, float2.zero, new float2(1f, 0f), .25f);
+            // Start at the authored velocity so this test isolates the tiny separation impulse
+            // instead of measuring the configured velocity-response ramp from zero.
             var currentVelocities = simulation.CurrentVelocities;
             currentVelocities[0] = new float2(2f, 3f);
             var contacts = simulation.Contacts;
@@ -179,6 +181,9 @@ namespace LocalAvoidance2D.Tests
             settings.PreferredSeparationMultiplier = 1.2f;
             settings.SeparationSpeedRatio = 1f;
             simulation.Settings = settings;
+            var currentVelocities = simulation.CurrentVelocities;
+            currentVelocities[0] = new float2(1f, 0f);
+            currentVelocities[1] = new float2(1f, 0f);
 
             simulation.Step(.1f, 2);
 
