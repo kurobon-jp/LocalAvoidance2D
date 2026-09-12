@@ -57,6 +57,8 @@ namespace LocalAvoidance2D.Tests
         {
             using var simulation = Create(1);
             SetAgent(simulation, 0, float2.zero, new float2(1f, 0f), .25f);
+            // Start at the authored velocity so this test isolates the tiny separation impulse
+            // instead of measuring the configured velocity-response ramp from zero.
             var currentVelocities = simulation.CurrentVelocities;
             currentVelocities[0] = new float2(2f, 3f);
             var contacts = simulation.Contacts;
@@ -115,6 +117,54 @@ namespace LocalAvoidance2D.Tests
             Assert.That(math.all(math.isfinite(simulation.ResolvedPositions[0])), Is.True);
             Assert.That(math.distance(simulation.ResolvedPositions[0], simulation.ResolvedPositions[1]),
                 Is.GreaterThan(0f));
+        }
+
+        [Test]
+        public void ZeroDurationStepResolvesPenetrationWithoutNaN()
+        {
+            using var simulation = Create(2);
+            SetAgent(simulation, 0, float2.zero, float2.zero, .5f);
+            SetAgent(simulation, 1, new float2(.5f, 0f), float2.zero, .5f);
+
+            simulation.Step(0f, 2);
+
+            Assert.That(math.all(math.isfinite(simulation.ResolvedPositions[0])), Is.True);
+            Assert.That(math.all(math.isfinite(simulation.ResolvedPositions[1])), Is.True);
+            Assert.That(math.distance(simulation.ResolvedPositions[0], simulation.ResolvedPositions[1]),
+                Is.GreaterThan(.5f));
+            Assert.That(simulation.ResolvedVelocities[0], Is.EqualTo(float2.zero));
+            Assert.That(simulation.ResolvedVelocities[1], Is.EqualTo(float2.zero));
+        }
+
+        [Test]
+        public void ZeroDeltaTimeStepKeepsDirectControlStateFinite()
+        {
+            using var simulation = Create(2);
+            SetAgent(simulation, 0, float2.zero, new float2(1f, 0f), .5f);
+            SetAgent(simulation, 1, new float2(.9f, 0f), float2.zero, .5f);
+            var directControl = simulation.DirectControl;
+            directControl[0] = 1;
+
+            simulation.Step(0f, 2);
+
+            Assert.That(math.all(math.isfinite(simulation.ResolvedPositions[0])), Is.True);
+            Assert.That(math.all(math.isfinite(simulation.ResolvedVelocities[0])), Is.True);
+        }
+
+        [Test]
+        public void HalfContactPressureIsRoundedToFullSlowdown()
+        {
+            using var simulation = Create(1);
+            SetAgent(simulation, 0, float2.zero, new float2(1f, 0f), .5f);
+            var contacts = simulation.Contacts;
+            contacts[0] = new AgentContactState { BlockingAgentContactCount = 3 };
+            var settings = simulation.Settings;
+            settings.ContactSlowdown = 1f;
+            simulation.Settings = settings;
+
+            simulation.Step(.1f, 1);
+
+            Assert.That(simulation.MovedPositions[0], Is.EqualTo(float2.zero));
         }
 
         [Test]
@@ -179,6 +229,9 @@ namespace LocalAvoidance2D.Tests
             settings.PreferredSeparationMultiplier = 1.2f;
             settings.SeparationSpeedRatio = 1f;
             simulation.Settings = settings;
+            var currentVelocities = simulation.CurrentVelocities;
+            currentVelocities[0] = new float2(1f, 0f);
+            currentVelocities[1] = new float2(1f, 0f);
 
             simulation.Step(.1f, 2);
 

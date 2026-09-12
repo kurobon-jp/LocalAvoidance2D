@@ -197,7 +197,9 @@ namespace LocalAvoidance2D
         public JobHandle Schedule(float deltaTime, int agentCount, int obstacleCount,
             LocalAvoidanceDiagnostics diagnostics, JobHandle dependency = default)
         {
-            if (deltaTime <= 0f) return default;
+            // A zero-duration step is useful for resolving existing penetration and updating
+            // contact state without integrating velocity. Only negative time is invalid.
+            if (deltaTime < 0f) return default;
             if ((uint)agentCount > (uint)Capacity) throw new ArgumentOutOfRangeException(nameof(agentCount));
             if ((uint)obstacleCount > (uint)ObstacleCapacity)
                 throw new ArgumentOutOfRangeException(nameof(obstacleCount));
@@ -594,6 +596,7 @@ namespace LocalAvoidance2D
             public void Execute(int index)
             {
                 if (Active[index] == 0) return;
+                var inverseDeltaTime = DeltaTime > 1e-6f ? 1f / DeltaTime : 0f;
                 var position = Positions[index];
                 var desired = DesiredVelocities[index];
                 var priority = AvoidancePriorities[index];
@@ -630,6 +633,7 @@ namespace LocalAvoidance2D
                 var pressure = directControl
                     ? 0f
                     : math.max(blockingPressure, penetrationPressure);
+                if (pressure >= .5f) pressure = 1f;
                 desired *= 1f - pressure * ContactSlowdown;
                 var speed = math.length(desired);
                 var direction = speed > 1e-5f ? desired / speed : float2.zero;
@@ -641,6 +645,9 @@ namespace LocalAvoidance2D
                     ? math.max(NeighborDistance,
                         (Radii[index] + LargeRadiusThreshold) * PreferredSeparationMultiplier)
                     : NeighborDistance;
+                if (directControl)
+                    regularSearchDistance = math.max(regularSearchDistance,
+                        speed * DeltaTime + Radii[index] * 2f);
                 Collect(index, position, regularSearchDistance, InverseCellSize, Positions, Radii, Active,
                     DirectControl, StableContactResolution, Layers, CollisionMasks, Grid,
                     MaximumNeighbors, MaximumCandidateChecks, ref neighbors,
@@ -878,11 +885,12 @@ namespace LocalAvoidance2D
                             // must not carry the controlled body backward before integration.
                             // Motion away from the body may still extend the available movement.
                             var otherNormalSpeed = math.min(0f, math.dot(otherVelocity, normal));
-                            var minimumDistance = (Radii[index] + Radii[other]) *
-                                                  MinimumSpacingRatio;
+                            // Direct input must stop at the geometric contact boundary;
+                            // preferred spacing is for autonomous crowd behavior only.
+                            var minimumDistance = Radii[index] + Radii[other];
                             var minimumNormalSpeed = otherNormalSpeed +
-                                                     (math.min(minimumDistance, distance) - distance) /
-                                                     DeltaTime;
+                                                     (math.min(minimumDistance, distance) - distance) *
+                                                     inverseDeltaTime;
                             var normalSpeed = math.dot(targetVelocity, normal);
                             if (normalSpeed < minimumNormalSpeed)
                                 targetVelocity += normal * (minimumNormalSpeed - normalSpeed);
@@ -958,6 +966,7 @@ namespace LocalAvoidance2D
 #endif
                     return;
                 }
+                var inverseDeltaTime = DeltaTime > 1e-6f ? 1f / DeltaTime : 0f;
                 var position = Positions[index];
                 var directControl = DirectControl[index] != 0;
                 var stableContactResolution = StableContactResolution[index] != 0;
@@ -1071,7 +1080,10 @@ namespace LocalAvoidance2D
                         // against one deepest neighbor makes a surrounded body alternate between
                         // opposing normals; correcting the dynamic neighbor removes penetration
                         // without moving the idle body. Direct input immediately disables this.
-                        correctionShare = idleStable ? 0f : 1f;
+                        var otherIsDominant = Masses[other] /
+                                               math.max(Masses[index], .0001f) >=
+                                               DominantMassRatioThreshold;
+                        correctionShare = idleStable && !otherIsDominant ? 0f : 1f;
                     }
                     else
                     {
@@ -1229,10 +1241,15 @@ namespace LocalAvoidance2D
                     if (massRatio >= DominantMassRatioThreshold)
                         maximumCorrectionSpeed *= math.min(5f, math.sqrt(massRatio));
                     // A frame-time spike must not multiply the visible depenetration jump.
+                    // A zero-duration step still needs a finite positional budget so it can
+                    // resolve existing penetration without integrating authored velocity.
                     // Movement still integrates the full DeltaTime; only the solver impulse is capped.
-                    var correctionDeltaTime = math.min(DeltaTime, 1f / 30f);
+                    var correctionDeltaTime = math.min(math.max(DeltaTime, 1f / 60f), 1f / 30f);
                     maxCorrection = math.min(maxCorrection,
                         maximumCorrectionSpeed * correctionDeltaTime * InverseSolverIterations);
+                    if (stableContactResolution && dominantMassRatio >= DominantMassRatioThreshold)
+                        maxCorrection = math.max(maxCorrection,
+                            maximumCorrectionSpeed * correctionDeltaTime * InverseSolverIterations);
                 }
                 var lengthSqr = math.lengthsq(correction);
                 if (contact.AgentContactCount > 0 && lengthSqr < 1e-8f)
@@ -1242,11 +1259,6 @@ namespace LocalAvoidance2D
                 }
                 if (lengthSqr > maxCorrection * maxCorrection)
                     correction *= maxCorrection * math.rsqrt(lengthSqr);
-                // Stable/direct-controlled bodies use a temporally retained single constraint.
-                // Apply this after the zero-correction fallback above; otherwise that fallback
-                // restores strongestCorrection and makes the second iteration move again.
-                if ((directControl || stableContactResolution) && SolverIteration > 0)
-                    correction = float2.zero;
 #if ENABLE_DIAGNOSTICS_LOG
                 if (SolverIteration < LocalAvoidanceDiagnostics.MaximumSolverIterations)
                 {
@@ -1265,11 +1277,12 @@ namespace LocalAvoidance2D
                 contact.IsTouching = (byte)((contact.AgentContactCount + contact.ObstacleContactCount) > 0 ? 1 : 0);
                 var correctionVelocityWeight = math.max(0f, CorrectionVelocityWeights[index]);
                 if (!directControl && correctionVelocityWeight > 0f &&
-                    DeltaTime > 1e-6f && CorrectionVelocityInfluence > 0f)
+                    inverseDeltaTime > 0f && CorrectionVelocityInfluence > 0f)
                 {
                     var totalCorrection = correction + (position - positionBeforeObstacle);
                     constrainedVelocity += totalCorrection *
-                                           (CorrectionVelocityInfluence * correctionVelocityWeight / DeltaTime);
+                                           (CorrectionVelocityInfluence * correctionVelocityWeight *
+                                            inverseDeltaTime);
                 }
                 if (!directControl)
                 {
@@ -1373,7 +1386,7 @@ namespace LocalAvoidance2D
                     if (other == index || active[other] == 0 ||
                         (masks[index] & layers[other]) == 0 || (masks[other] & layers[index]) == 0) continue;
                     var distanceSqr = math.lengthsq(position - positions[other]);
-                    if (distanceSqr >= distanceSqrLimit) continue;
+                    if (distanceSqr > distanceSqrLimit) continue;
                     InsertNearest(ref result, new Neighbor
                     {
                         Index = other,
@@ -1414,7 +1427,7 @@ namespace LocalAvoidance2D
                 var searchDistance = math.max(distance,
                     combinedRadius * preferredSeparationMultiplier);
                 var distanceSqr = math.lengthsq(position - positions[other]);
-                if (distanceSqr >= searchDistance * searchDistance) continue;
+                if (distanceSqr > searchDistance * searchDistance) continue;
                 InsertRequired(ref result, new Neighbor
                 {
                     Index = other,
@@ -1443,7 +1456,7 @@ namespace LocalAvoidance2D
                 // steering and regular-agent searches.
                 var searchDistance = math.max(distance, combinedRadius * preferredSeparationMultiplier);
                 var distanceSqr = math.lengthsq(position - positions[other]);
-                if (distanceSqr >= searchDistance * searchDistance) continue;
+                if (distanceSqr > searchDistance * searchDistance) continue;
                 InsertNearest(ref result, new Neighbor
                 {
                     Index = other,
