@@ -1239,8 +1239,10 @@ namespace LocalAvoidance2D
                     if (massRatio >= DominantMassRatioThreshold)
                         maximumCorrectionSpeed *= math.min(5f, math.sqrt(massRatio));
                     // A frame-time spike must not multiply the visible depenetration jump.
+                    // A zero-duration step still needs a finite positional budget so it can
+                    // resolve existing penetration without integrating authored velocity.
                     // Movement still integrates the full DeltaTime; only the solver impulse is capped.
-                    var correctionDeltaTime = math.min(DeltaTime, 1f / 30f);
+                    var correctionDeltaTime = math.min(math.max(DeltaTime, 1f / 60f), 1f / 30f);
                     maxCorrection = math.min(maxCorrection,
                         maximumCorrectionSpeed * correctionDeltaTime * InverseSolverIterations);
                     if (stableContactResolution && dominantMassRatio >= DominantMassRatioThreshold)
@@ -1255,12 +1257,6 @@ namespace LocalAvoidance2D
                 }
                 if (lengthSqr > maxCorrection * maxCorrection)
                     correction *= maxCorrection * math.rsqrt(lengthSqr);
-                // Stable/direct-controlled bodies use a temporally retained single constraint.
-                // Apply this after the zero-correction fallback above; otherwise that fallback
-                // restores strongestCorrection and makes the second iteration move again.
-                // Keep applying the retained correction on subsequent Jacobi iterations. This
-                // is required for stable agents that have a capped per-iteration correction
-                // speed to fully clear a dominant-mass contact.
 #if ENABLE_DIAGNOSTICS_LOG
                 if (SolverIteration < LocalAvoidanceDiagnostics.MaximumSolverIterations)
                 {

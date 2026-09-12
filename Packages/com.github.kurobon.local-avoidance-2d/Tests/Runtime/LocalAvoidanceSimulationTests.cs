@@ -120,6 +120,39 @@ namespace LocalAvoidance2D.Tests
         }
 
         [Test]
+        public void ZeroDurationStepResolvesPenetrationWithoutNaN()
+        {
+            using var simulation = Create(2);
+            SetAgent(simulation, 0, float2.zero, float2.zero, .5f);
+            SetAgent(simulation, 1, new float2(.5f, 0f), float2.zero, .5f);
+
+            simulation.Step(0f, 2);
+
+            Assert.That(math.all(math.isfinite(simulation.ResolvedPositions[0])), Is.True);
+            Assert.That(math.all(math.isfinite(simulation.ResolvedPositions[1])), Is.True);
+            Assert.That(math.distance(simulation.ResolvedPositions[0], simulation.ResolvedPositions[1]),
+                Is.GreaterThan(.5f));
+            Assert.That(simulation.ResolvedVelocities[0], Is.EqualTo(float2.zero));
+            Assert.That(simulation.ResolvedVelocities[1], Is.EqualTo(float2.zero));
+        }
+
+        [Test]
+        public void HalfContactPressureIsRoundedToFullSlowdown()
+        {
+            using var simulation = Create(1);
+            SetAgent(simulation, 0, float2.zero, new float2(1f, 0f), .5f);
+            var contacts = simulation.Contacts;
+            contacts[0] = new AgentContactState { BlockingAgentContactCount = 3 };
+            var settings = simulation.Settings;
+            settings.ContactSlowdown = 1f;
+            simulation.Settings = settings;
+
+            simulation.Step(.1f, 1);
+
+            Assert.That(simulation.MovedPositions[0], Is.EqualTo(float2.zero));
+        }
+
+        [Test]
         public void HeadOnAgentsSteerToOppositeWorldSpaceSides()
         {
             using var simulation = Create(2);
