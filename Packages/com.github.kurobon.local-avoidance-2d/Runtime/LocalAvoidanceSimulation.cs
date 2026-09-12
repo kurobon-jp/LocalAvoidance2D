@@ -596,6 +596,7 @@ namespace LocalAvoidance2D
             public void Execute(int index)
             {
                 if (Active[index] == 0) return;
+                var inverseDeltaTime = DeltaTime > 1e-6f ? 1f / DeltaTime : 0f;
                 var position = Positions[index];
                 var desired = DesiredVelocities[index];
                 var priority = AvoidancePriorities[index];
@@ -888,8 +889,8 @@ namespace LocalAvoidance2D
                             // preferred spacing is for autonomous crowd behavior only.
                             var minimumDistance = Radii[index] + Radii[other];
                             var minimumNormalSpeed = otherNormalSpeed +
-                                                     (math.min(minimumDistance, distance) - distance) /
-                                                     DeltaTime;
+                                                     (math.min(minimumDistance, distance) - distance) *
+                                                     inverseDeltaTime;
                             var normalSpeed = math.dot(targetVelocity, normal);
                             if (normalSpeed < minimumNormalSpeed)
                                 targetVelocity += normal * (minimumNormalSpeed - normalSpeed);
@@ -965,6 +966,7 @@ namespace LocalAvoidance2D
 #endif
                     return;
                 }
+                var inverseDeltaTime = DeltaTime > 1e-6f ? 1f / DeltaTime : 0f;
                 var position = Positions[index];
                 var directControl = DirectControl[index] != 0;
                 var stableContactResolution = StableContactResolution[index] != 0;
@@ -1275,11 +1277,12 @@ namespace LocalAvoidance2D
                 contact.IsTouching = (byte)((contact.AgentContactCount + contact.ObstacleContactCount) > 0 ? 1 : 0);
                 var correctionVelocityWeight = math.max(0f, CorrectionVelocityWeights[index]);
                 if (!directControl && correctionVelocityWeight > 0f &&
-                    DeltaTime > 1e-6f && CorrectionVelocityInfluence > 0f)
+                    inverseDeltaTime > 0f && CorrectionVelocityInfluence > 0f)
                 {
                     var totalCorrection = correction + (position - positionBeforeObstacle);
                     constrainedVelocity += totalCorrection *
-                                           (CorrectionVelocityInfluence * correctionVelocityWeight / DeltaTime);
+                                           (CorrectionVelocityInfluence * correctionVelocityWeight *
+                                            inverseDeltaTime);
                 }
                 if (!directControl)
                 {

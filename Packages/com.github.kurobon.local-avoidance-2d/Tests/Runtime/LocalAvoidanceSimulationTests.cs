@@ -137,6 +137,21 @@ namespace LocalAvoidance2D.Tests
         }
 
         [Test]
+        public void ZeroDeltaTimeStepKeepsDirectControlStateFinite()
+        {
+            using var simulation = Create(2);
+            SetAgent(simulation, 0, float2.zero, new float2(1f, 0f), .5f);
+            SetAgent(simulation, 1, new float2(.9f, 0f), float2.zero, .5f);
+            var directControl = simulation.DirectControl;
+            directControl[0] = 1;
+
+            simulation.Step(0f, 2);
+
+            Assert.That(math.all(math.isfinite(simulation.ResolvedPositions[0])), Is.True);
+            Assert.That(math.all(math.isfinite(simulation.ResolvedVelocities[0])), Is.True);
+        }
+
+        [Test]
         public void HalfContactPressureIsRoundedToFullSlowdown()
         {
             using var simulation = Create(1);
